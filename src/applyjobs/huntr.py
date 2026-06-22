@@ -35,7 +35,9 @@ def launch_huntr_context(pw, headless: bool):
         headless=headless,
         channel="chrome",
         user_agent=_USER_AGENT,
-        ignore_default_args=["--enable-automation"],
+        # Drop the automation/no-sandbox flags so Chrome behaves like a normal browser
+        # (no infobars, and Google's "browser not secure" sign-in block is avoided).
+        ignore_default_args=["--enable-automation", "--no-sandbox"],
         args=["--disable-blink-features=AutomationControlled"],
     )
 

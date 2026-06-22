@@ -16,16 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-from src.applyjobs.config import settings  # noqa: E402
 from src.applyjobs.huntr import launch_huntr_context  # noqa: E402
 
 
 def main() -> None:
-    start_url = settings.huntr_board_url or "https://huntr.co/login"
     with sync_playwright() as pw:
         context = launch_huntr_context(pw, headless=False)
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto(start_url)
+        page.goto("https://huntr.co/login")
         print("\n>>> Log in to Huntr in the opened Chrome window (Google sign-in works here).")
         input(">>> When your board is visible, press ENTER here to finish... ")
         context.close()
