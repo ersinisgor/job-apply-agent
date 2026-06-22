@@ -89,6 +89,26 @@ Yani `+`, `++` veya boş olanlar işlenir.
 
 ---
 
+## Huntr entegrasyonu (opsiyonel)
+
+Açıkken, Huntr board'una kaydettiğin yeni ilanları otomatik sheet'e yazar (sonra CV üretilir).
+
+**Açma:** `.env`'de `HUNTR_BOARD_URL=<board adresin>` ayarla. **Kapatma:** o satırı boş bırak/sil
+→ uygulama Huntr'sız eski hâline döner (kod değişmez).
+
+**İlk kurulum (tek seferlik):**
+```bash
+./.venv/bin/python scripts/huntr_login.py     # tarayıcıda Huntr'a giriş yap, ENTER
+```
+- İlk çalıştırmada mevcut Huntr ilanların "görüldü" işaretlenir (içeri alınmaz); sadece bundan
+  sonra kaydettiklerin sheet'e eklenir.
+- Manuel test: `./.venv/bin/python scripts/run_once.py --huntr`
+- Çekme sorun çıkarırsa: `./.venv/bin/python scripts/huntr_debug.py` → `huntr_debug/` klasörünü paylaş.
+
+**Geri dönüş cümleleri (bana söyleyeceklerin):**
+- **"Huntr'ı kapat"** → geçici/anında durdur (`.env`'den `HUNTR_BOARD_URL` kaldırılır).
+- **"Huntr entegrasyonunu tamamen geri al"** → kod Huntr öncesine döndürülür (git restore point).
+
 ## Kimlik bilgileri (tekrar gerekir mi?)
 
 - **Anthropic / Google OAuth / Service Account:** kalıcı, tekrar giriş gerekmez.
