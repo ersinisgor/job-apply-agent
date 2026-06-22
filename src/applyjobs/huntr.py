@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -41,52 +42,58 @@ def launch_huntr_context(pw, headless: bool):
         args=["--disable-blink-features=AutomationControlled"],
     )
 
-# Candidate JSON keys for each field (Huntr's exact names are confirmed via debug dump).
-_TITLE_KEYS = ("title", "jobTitle", "position", "role", "name")
-_COMPANY_KEYS = ("company", "companyName", "employer", "organization", "employerName")
-_URL_KEYS = ("url", "jobUrl", "postUrl", "link", "applyUrl", "jobPostingUrl", "jobPostUrl")
-_LOCATION_KEYS = ("location", "jobLocation", "city", "locationName")
-_DESC_KEYS = ("description", "jobDescription", "desc", "details")
+def _values(x):
+    """Huntr ships these collections as {id: obj} dicts (sometimes lists)."""
+    if isinstance(x, dict):
+        return list(x.values())
+    if isinstance(x, list):
+        return x
+    return []
 
 
-def _first(d: dict, keys) -> str:
-    for k in keys:
-        v = d.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-        if isinstance(v, dict):  # e.g. {"name": "..."} nested
-            for kk in ("name", "title", "label", "value"):
-                if isinstance(v.get(kk), str) and v[kk].strip():
-                    return v[kk].strip()
-    return ""
+def _find_board_payload(payloads: list) -> dict | None:
+    """The board payload is the JSON object that carries both 'jobs' and 'companies'."""
+    for p in payloads:
+        if isinstance(p, dict) and "jobs" in p and "companies" in p:
+            return p
+    return None
 
 
-def _looks_like_job(d: dict) -> bool:
-    has_title = bool(_first(d, _TITLE_KEYS))
-    has_anchor = bool(_first(d, _URL_KEYS) or _first(d, _COMPANY_KEYS))
-    return has_title and has_anchor
+def _normalize_url(url: str) -> str:
+    """Turn a LinkedIn search URL (…currentJobId=ID…) into a clean /jobs/view/ID/."""
+    url = (url or "").strip()
+    if "linkedin.com" in url and "currentJobId=" in url:
+        m = re.search(r"currentJobId=(\d+)", url)
+        if m:
+            return f"https://www.linkedin.com/jobs/view/{m.group(1)}/"
+    return url
 
 
-def _walk_for_jobs(node, out: list[dict]) -> None:
-    """Recursively collect dict nodes that look like job records."""
-    if isinstance(node, dict):
-        if _looks_like_job(node):
-            out.append(node)
-        for v in node.values():
-            _walk_for_jobs(v, out)
-    elif isinstance(node, list):
-        for item in node:
-            _walk_for_jobs(item, out)
+def parse_board(payload: dict) -> list[dict]:
+    """Join Huntr jobs with companies into {company,title,location,url,description}."""
+    comp_name = {}
+    for c in _values(payload.get("companies")):
+        cid = c.get("_id") or c.get("id")
+        if cid:
+            comp_name[cid] = (c.get("name") or "").strip()
 
-
-def _to_job(d: dict) -> dict:
-    return {
-        "company": _first(d, _COMPANY_KEYS),
-        "title": _first(d, _TITLE_KEYS),
-        "location": _first(d, _LOCATION_KEYS),
-        "url": _first(d, _URL_KEYS),
-        "description": _clean_html_to_text(_first(d, _DESC_KEYS)) if _first(d, _DESC_KEYS) else "",
-    }
+    jobs: list[dict] = []
+    for j in _values(payload.get("jobs")):
+        url = _normalize_url(j.get("url", ""))
+        if not url:
+            continue
+        loc = j.get("location")
+        location = loc.get("address", "") if isinstance(loc, dict) else (loc or "")
+        jobs.append(
+            {
+                "company": comp_name.get(j.get("_company"), ""),
+                "title": (j.get("title") or "").strip(),
+                "location": (location or "").strip(),
+                "url": url,
+                "description": _clean_html_to_text(j.get("htmlDescription", "")),
+            }
+        )
+    return jobs
 
 
 class HuntrClient:
@@ -124,20 +131,17 @@ class HuntrClient:
             finally:
                 context.close()
 
-        raw: list[dict] = []
-        for p in payloads:
-            _walk_for_jobs(p, raw)
+        board = _find_board_payload(payloads)
+        if board is None:
+            logger.warning("Huntr: board payload (jobs+companies) not found in %d payloads.", len(payloads))
+            return []
 
-        # De-dupe by url (fallback title+company) and require a URL to be usable.
+        # De-dupe by normalized url.
         jobs: dict[str, dict] = {}
-        for d in raw:
-            job = _to_job(d)
-            if not job["url"]:
-                continue
-            key = job["url"].split("?", 1)[0]
-            jobs.setdefault(key, job)
+        for job in parse_board(board):
+            jobs.setdefault(job["url"].split("?", 1)[0], job)
         result = list(jobs.values())
-        logger.info("Huntr: captured %d JSON payloads, %d job(s) with URL.", len(payloads), len(result))
+        logger.info("Huntr: %d payloads captured, %d job(s) parsed from the board.", len(payloads), len(result))
         return result
 
     def dump_debug(self, out_dir: Path) -> None:
