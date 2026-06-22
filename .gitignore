@@ -1,0 +1,17 @@
+# Secrets & credentials
+.env
+credentials/*.json
+
+# Local state (processed.json, last_cv_no, huntr_seen.json, ...)
+state/*
+!state/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
