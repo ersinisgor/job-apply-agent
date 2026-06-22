@@ -120,6 +120,11 @@ def _cell_to_str(value) -> str:
     return str(value)
 
 
+def _link_font(cell) -> Font:
+    """Hyperlink style (blue, underlined) at 10pt, keeping the cell's font family."""
+    return Font(name=cell.font.name, size=10, color="1155CC", underline="single")
+
+
 class SheetsClient:
     """Drive-backed reader/writer for the .xlsx job list."""
 
@@ -245,7 +250,7 @@ class SheetsClient:
         cell.value = url
         if url:
             cell.hyperlink = url
-            cell.font = Font(color="1155CC", underline="single")
+            cell.font = _link_font(cell)
 
     def append_job_rows(self, jobs: list[dict]) -> list[int]:
         """Append rows for new jobs — writes only K (link) + E (date) + A (No) + I + M.
@@ -316,7 +321,7 @@ class SheetsClient:
         j_cell = fill("J", fields.get("J", ""))  # company
         if j_cell is not None and fields.get("J_url"):
             j_cell.hyperlink = fields["J_url"]
-            j_cell.font = Font(color="1155CC", underline="single")
+            j_cell.font = _link_font(j_cell)
 
         ws.cell(row=row_number, column=CV_NO_COL_INDEX).value = cv_no
         if match_rate is not None:
