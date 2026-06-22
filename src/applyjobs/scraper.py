@@ -31,6 +31,34 @@ class JobPage:
     easy_apply: str = ""  # "Yok" for non-LinkedIn; "" for LinkedIn (not detectable)
 
 
+# Canonical spelling for common cities (handles English "Istanbul" -> Turkish "İstanbul").
+_CITY_MAP = {"istanbul": "İstanbul", "izmir": "İzmir", "icel": "Mersin", "mersin": "Mersin"}
+
+
+def _city_key(s: str) -> str:
+    return s.replace("İ", "i").replace("I", "i").replace("ı", "i").lower().strip()
+
+
+def _clean_city(text: str) -> str:
+    """LinkedIn location like 'Istanbul, Istanbul, Türkiye' -> 'İstanbul'.
+
+    Drops duplicated segments, keeps the first (city), and canonicalizes spelling.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in (part.strip() for part in text.split(",")):
+        k = _city_key(p)
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(p)
+    if not uniq:
+        return ""
+    return _CITY_MAP.get(_city_key(uniq[0]), uniq[0])
+
+
 def _map_employment(raw: str) -> str:
     r = (raw or "").strip().lower()
     if not r:
@@ -181,7 +209,7 @@ class Scraper:
         if a:
             company = (a.inner_text() or "").strip()
             company_url = (a.get_attribute("href") or "").split("?", 1)[0]
-        city = text_of(".topcard__flavor--bullet")
+        city = _clean_city(text_of(".topcard__flavor--bullet"))
         work_type = ""
         for li in page.query_selector_all("li.description__job-criteria-item"):
             t = " ".join((li.inner_text() or "").split())
@@ -194,7 +222,7 @@ class Scraper:
             title = title or jl.get("title", "")
             company = company or jl.get("company", "")
             company_url = company_url or jl.get("company_url", "")
-            city = city or jl.get("city", "")
+            city = city or _clean_city(jl.get("city", ""))
             work_type = work_type or _map_employment(jl.get("employment_type", ""))
 
         return {"title": title, "company": company, "company_url": company_url,
