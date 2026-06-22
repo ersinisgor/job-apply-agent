@@ -240,17 +240,26 @@ class SheetsClient:
                 last = r
         return last
 
+    def _set_link_cell(self, cell, url: str) -> None:
+        """Write a clickable hyperlink cell (blue, underlined)."""
+        cell.value = url
+        if url:
+            cell.hyperlink = url
+            cell.font = Font(color="1155CC", underline="single")
+
     def append_job_rows(self, jobs: list[dict]) -> list[int]:
-        """Append rows for new jobs. Each job dict may contain:
-        company, title, location, url, work_mode, work_type.
-        Returns the sheet row numbers written. Single download-edit-upload.
+        """Append rows for new jobs — writes only K (link) + E (date) + A (No) + I + M.
+
+        The remaining columns (C/F/G/H/J/L) are filled later by write_processed_row
+        from the scraped job page. Each job dict needs only {"url": ...}.
+        Single download-edit-upload.
         """
         if not jobs:
             return []
         wb, ws = self._load_workbook()
         last = self._last_data_row(ws)
         date_fmt = ws.cell(row=last, column=self._col("E")).number_format if last >= 2 else None
-        # Find the most recent numeric "No" (A) by scanning upward, to continue numbering.
+        # Continue the "No" (A) numbering from the most recent numeric value above.
         last_a = None
         for rr in range(last, 1, -1):
             v = self._as_int(_cell_to_str(ws.cell(row=rr, column=self._col("A")).value))
@@ -269,21 +278,9 @@ class SheetsClient:
             e_cell.value = today
             if date_fmt:
                 e_cell.number_format = date_fmt
-            ws.cell(row=r, column=self._col("F")).value = job.get("location", "")
-            ws.cell(row=r, column=self._col("G")).value = job.get("work_mode", "")
-            ws.cell(row=r, column=self._col("H")).value = job.get("work_type", "")
             ws.cell(row=r, column=self._col("I")).value = "İş"
-            ws.cell(row=r, column=self._col("J")).value = job.get("company", "")
-            # K as a clickable hyperlink.
-            url = job.get("url", "")
-            k_cell = ws.cell(row=r, column=self._col("K"))
-            k_cell.value = url
-            if url:
-                k_cell.hyperlink = url
-                k_cell.font = Font(color="1155CC", underline="single")
-            ws.cell(row=r, column=self._col("L")).value = job.get("title", "")
-            # İlan No formula: extract the id between "/jobs/view/" and the next "/"
-            # (works for clean ".../jobs/view/<id>/" URLs and for "...<id>/?..." ones).
+            self._set_link_cell(ws.cell(row=r, column=self._col("K")), job.get("url", ""))
+            # İlan No formula: extract the id between "/jobs/view/" and the next "/".
             ws.cell(row=r, column=self._col("M")).value = (
                 f'=IFERROR(MID(K{r},FIND("/jobs/view/",K{r})+11,'
                 f'FIND("/",K{r}&"/",FIND("/jobs/view/",K{r})+11)-FIND("/jobs/view/",K{r})-11),"")'
@@ -294,3 +291,35 @@ class SheetsClient:
         _apply_dropdowns(ws)
         self._upload(wb)
         return written
+
+    def write_processed_row(
+        self, row_number: int, fields: dict, cv_no: int, match_rate: float | None = None
+    ) -> None:
+        """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink),
+        plus N (CV No) and P (Match Rate). G is never touched (filled manually).
+        Single download-edit-upload."""
+        wb, ws = self._load_workbook()
+
+        def fill(col: str, val: str):
+            if not val:
+                return None
+            cell = ws.cell(row=row_number, column=self._col(col))
+            if _cell_to_str(cell.value).strip() == "":
+                cell.value = val
+                return cell
+            return None
+
+        fill("C", fields.get("C", ""))   # Easy Apply (only set for non-LinkedIn = "Yok")
+        fill("F", fields.get("F", ""))   # city
+        fill("H", fields.get("H", ""))   # employment type
+        fill("L", fields.get("L", ""))   # title
+        j_cell = fill("J", fields.get("J", ""))  # company
+        if j_cell is not None and fields.get("J_url"):
+            j_cell.hyperlink = fields["J_url"]
+            j_cell.font = Font(color="1155CC", underline="single")
+
+        ws.cell(row=row_number, column=CV_NO_COL_INDEX).value = cv_no
+        if match_rate is not None:
+            ws.cell(row=row_number, column=MATCH_RATE_COL_INDEX).value = match_rate
+        _apply_dropdowns(ws)
+        self._upload(wb)

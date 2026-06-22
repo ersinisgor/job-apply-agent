@@ -5,7 +5,9 @@ sites or LinkedIn. LinkedIn is handled as a special case using a saved login sta
 """
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -13,6 +15,33 @@ from playwright.sync_api import sync_playwright
 from .config import LINKEDIN_STATE_FILE
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class JobPage:
+    """Structured data read from a job posting page."""
+
+    url: str
+    description: str
+    title: str = ""
+    company: str = ""
+    company_url: str = ""
+    city: str = ""
+    work_type: str = ""   # Full-Time / Part-Time / Contract
+    easy_apply: str = ""  # "Yok" for non-LinkedIn; "" for LinkedIn (not detectable)
+
+
+def _map_employment(raw: str) -> str:
+    r = (raw or "").strip().lower()
+    if not r:
+        return ""
+    if "part" in r:
+        return "Part-Time"
+    if "contract" in r or "temporary" in r or "temp" in r:
+        return "Contract"
+    if "full" in r:
+        return "Full-Time"
+    return ""
 
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -94,31 +123,107 @@ class Scraper:
             self._pw.stop()
 
     def fetch_description(self, url: str) -> str:
+        """Backward-compatible: just the description text."""
+        return self.fetch_job(url).description
+
+    def fetch_job(self, url: str) -> JobPage:
+        """Read the job page once: description + structured fields.
+
+        LinkedIn only serves its public (guest) view to automation, so fields come
+        from the public-view DOM (top card + job-criteria list), with a JSON-LD
+        fallback for non-LinkedIn career sites.
+        """
         if not url:
             raise ValueError("Empty job URL")
+        is_linkedin = "linkedin.com" in url.lower()
         page = self._context.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            page.wait_for_timeout(2_500)  # let client-side content render
-
-            is_linkedin = "linkedin.com" in url.lower()
-            if is_linkedin:
-                text = self._extract_linkedin(page)
-                if text:
-                    return _truncate_linkedin_noise(text)
-                logger.warning("LinkedIn selectors empty; falling back to full-page text.")
-
-            html = page.content()
-            text = _clean_html_to_text(html)
-            if is_linkedin:
-                text = _truncate_linkedin_noise(text)
-            if len(text) < 80:
-                raise RuntimeError(
-                    f"Extracted description too short ({len(text)} chars) from {url}"
-                )
-            return text
+            page.wait_for_timeout(2_500)
+            description = self._extract_description(page, is_linkedin)
+            fields = self._extract_fields(page)
+            return JobPage(
+                url=url,
+                description=description,
+                title=fields.get("title", ""),
+                company=fields.get("company", ""),
+                company_url=fields.get("company_url", ""),
+                city=fields.get("city", ""),
+                work_type=fields.get("work_type", ""),
+                easy_apply="" if is_linkedin else "Yok",
+            )
         finally:
             page.close()
+
+    def _extract_description(self, page, is_linkedin: bool) -> str:
+        if is_linkedin:
+            text = self._extract_linkedin(page)
+            if text:
+                return _truncate_linkedin_noise(text)
+            logger.warning("LinkedIn selectors empty; falling back to full-page text.")
+        text = _clean_html_to_text(page.content())
+        if is_linkedin:
+            text = _truncate_linkedin_noise(text)
+        if len(text) < 80:
+            raise RuntimeError(f"Extracted description too short ({len(text)} chars).")
+        return text
+
+    def _extract_fields(self, page) -> dict:
+        """Title/company(+url)/city/employment-type from the LinkedIn public view,
+        falling back to JSON-LD JobPosting (covers many non-LinkedIn career sites)."""
+        def text_of(sel: str) -> str:
+            el = page.query_selector(sel)
+            return (el.inner_text() or "").strip() if el else ""
+
+        title = text_of("h1.top-card-layout__title")
+        company = company_url = ""
+        a = page.query_selector("a.topcard__org-name-link")
+        if a:
+            company = (a.inner_text() or "").strip()
+            company_url = (a.get_attribute("href") or "").split("?", 1)[0]
+        city = text_of(".topcard__flavor--bullet")
+        work_type = ""
+        for li in page.query_selector_all("li.description__job-criteria-item"):
+            t = " ".join((li.inner_text() or "").split())
+            if "employment type" in t.lower():
+                work_type = _map_employment(t.lower().split("employment type", 1)[-1])
+                break
+
+        if not (title and company and city and work_type):
+            jl = self._parse_jsonld(page)
+            title = title or jl.get("title", "")
+            company = company or jl.get("company", "")
+            company_url = company_url or jl.get("company_url", "")
+            city = city or jl.get("city", "")
+            work_type = work_type or _map_employment(jl.get("employment_type", ""))
+
+        return {"title": title, "company": company, "company_url": company_url,
+                "city": city, "work_type": work_type}
+
+    @staticmethod
+    def _parse_jsonld(page) -> dict:
+        for s in page.query_selector_all('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(s.inner_text())
+            except Exception:  # noqa: BLE001
+                continue
+            for it in (data if isinstance(data, list) else [data]):
+                if not (isinstance(it, dict) and it.get("@type") == "JobPosting"):
+                    continue
+                org = it.get("hiringOrganization") or {}
+                loc = it.get("jobLocation") or {}
+                addr = (loc.get("address") if isinstance(loc, dict) else {}) or {}
+                emp = it.get("employmentType")
+                if isinstance(emp, list):
+                    emp = emp[0] if emp else ""
+                return {
+                    "title": it.get("title", "") or "",
+                    "company": org.get("name", "") if isinstance(org, dict) else "",
+                    "company_url": (org.get("sameAs") or org.get("url") or "") if isinstance(org, dict) else "",
+                    "city": addr.get("addressLocality", "") if isinstance(addr, dict) else "",
+                    "employment_type": emp or "",
+                }
+        return {}
 
     def _extract_linkedin(self, page) -> str:
         # Click "show more" if present so the full description is in the DOM.

@@ -70,31 +70,6 @@ def save_huntr_cursor(created_at: str) -> None:
     HUNTR_CURSOR_FILE.write_text(created_at or "", encoding="utf-8")
 
 
-def _infer_work_mode(text: str) -> str:
-    t = text.lower()
-    if "hybrid" in t or "hibrit" in t or "hybrit" in t:
-        return "Hybrit"
-    if "remote" in t or "uzaktan" in t or "work from home" in t or "wfh" in t:
-        return "Remote"
-    if (
-        "on-site" in t or "onsite" in t or "on site" in t or "in office" in t
-        or "in-office" in t or "in person" in t or "in-person" in t or "on premise" in t
-    ):
-        return "On-site"
-    return ""
-
-
-def _infer_work_type(text: str) -> str:
-    t = text.lower()
-    if "part-time" in t or "part time" in t or "yarı zaman" in t:
-        return "Part-Time"
-    if "contract" in t or "freelance" in t or "sözleşmeli" in t or "contractor" in t:
-        return "Contract"
-    if "full-time" in t or "full time" in t or "tam zaman" in t or "permanent" in t:
-        return "Full-Time"
-    return ""
-
-
 def sync_huntr_to_sheet() -> int:
     """Import newly-saved Huntr board jobs into the sheet. Returns rows appended.
 
@@ -123,23 +98,13 @@ def sync_huntr_to_sheet() -> int:
     sheets = SheetsClient()
     existing_urls = {_norm_url(r.link) for r in sheets.get_rows() if r.link}
 
-    new_jobs = []
-    for j in jobs:
-        if j.get("created_at", "") <= cursor:
-            continue
-        if _norm_url(j["url"]) in existing_urls:
-            continue
-        text = " ".join([j.get("title", ""), j.get("location", ""), j.get("description", "")])
-        new_jobs.append(
-            {
-                "company": j.get("company", ""),
-                "title": j.get("title", ""),
-                "location": j.get("location", ""),
-                "url": j["url"],
-                "work_mode": _infer_work_mode(text),
-                "work_type": _infer_work_type(text),
-            }
-        )
+    # Only the URL is taken from Huntr; the rest of the columns are filled later from
+    # the scraped job page (write_processed_row).
+    new_jobs = [
+        {"url": j["url"]}
+        for j in jobs
+        if j.get("created_at", "") > cursor and _norm_url(j["url"]) not in existing_urls
+    ]
 
     # Advance the cursor past everything currently on the board so we don't re-check it.
     if max_created and max_created > cursor:
@@ -196,17 +161,36 @@ def _export_google_doc(cv_no: int, cv_md: str) -> None:
         logger.exception("Google Doc export failed for cv_%d (Markdown CV still saved).", cv_no)
 
 
-def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> float | None:
-    """Scrape the link, generate the CV, save outputs. Returns the match rate."""
-    job_description = scraper.fetch_description(row.link)
-    logger.info("Fetched description (%d chars)", len(job_description))
+def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | None, dict]:
+    """Scrape the page (description + fields), generate the CV, save outputs.
 
-    full_response, cv_md, match_rate = generator.generate(
-        job_description, work_mode=row.work_mode, city=row.city
+    Returns (match_rate, fields) where fields are the column values to write
+    (only-empty) to the sheet. G (work mode) is intentionally NOT inferred — it is
+    filled manually — so the relocation sentence uses the row's existing G if set.
+    """
+    jp = scraper.fetch_job(row.link)
+    logger.info(
+        "Fetched page: %r @ %r | %s | %s (%d chars desc)",
+        jp.title, jp.company, jp.city, jp.work_type, len(jp.description),
     )
-    _save_outputs(cv_no, cv_md, full_response, job_description)
+
+    work_mode = row.work_mode  # manual (often empty -> default relocation sentence)
+    city = row.city or jp.city
+    full_response, cv_md, match_rate = generator.generate(
+        jp.description, work_mode=work_mode, city=city
+    )
+    _save_outputs(cv_no, cv_md, full_response, jp.description)
     _export_google_doc(cv_no, cv_md)
-    return match_rate
+
+    fields = {
+        "C": jp.easy_apply,
+        "F": jp.city,
+        "H": jp.work_type,
+        "L": jp.title,
+        "J": jp.company,
+        "J_url": jp.company_url,
+    }
+    return match_rate, fields
 
 
 def run_scan(
@@ -260,7 +244,7 @@ def run_scan(
             #    own edits to this row (B/C/F/G/H...) ~1.5 min to sync to Drive before
             #    the app writes, and means we touch the sheet only once (less clobbering).
             try:
-                match_rate = _generate_and_save(row, cv_no, scraper)
+                match_rate, fields = _generate_and_save(row, cv_no, scraper)
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Generation failed for row %d; number not consumed, will retry next scan.",
@@ -268,9 +252,10 @@ def run_scan(
                 )
                 continue
 
-            # 2) Single sheet write at the end: CV No (N) + Match Rate (P) together.
+            # 2) Single sheet write at the end: page-derived fields (only-empty) +
+            #    CV No (N) + Match Rate (P) together.
             try:
-                sheets.write_cv_and_match(row.number, cv_no, match_rate)
+                sheets.write_processed_row(row.number, fields, cv_no, match_rate)
                 save_last_cv_no(cv_no)
                 next_no += 1
             except Exception:  # noqa: BLE001
