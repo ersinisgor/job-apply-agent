@@ -74,9 +74,12 @@ def _infer_work_mode(text: str) -> str:
     t = text.lower()
     if "hybrid" in t or "hibrit" in t or "hybrit" in t:
         return "Hybrit"
-    if "remote" in t or "uzaktan" in t:
+    if "remote" in t or "uzaktan" in t or "work from home" in t or "wfh" in t:
         return "Remote"
-    if "on-site" in t or "onsite" in t or "on site" in t or "in office" in t or "in-office" in t:
+    if (
+        "on-site" in t or "onsite" in t or "on site" in t or "in office" in t
+        or "in-office" in t or "in person" in t or "in-person" in t or "on premise" in t
+    ):
         return "On-site"
     return ""
 
@@ -85,9 +88,9 @@ def _infer_work_type(text: str) -> str:
     t = text.lower()
     if "part-time" in t or "part time" in t or "yarı zaman" in t:
         return "Part-Time"
-    if "contract" in t or "freelance" in t or "sözleşmeli" in t:
+    if "contract" in t or "freelance" in t or "sözleşmeli" in t or "contractor" in t:
         return "Contract"
-    if "full-time" in t or "full time" in t or "tam zaman" in t:
+    if "full-time" in t or "full time" in t or "tam zaman" in t or "permanent" in t:
         return "Full-Time"
     return ""
 

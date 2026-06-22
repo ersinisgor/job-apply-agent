@@ -13,6 +13,7 @@ import string
 from dataclasses import dataclass, field
 
 import openpyxl
+from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -273,11 +274,19 @@ class SheetsClient:
             ws.cell(row=r, column=self._col("H")).value = job.get("work_type", "")
             ws.cell(row=r, column=self._col("I")).value = "İş"
             ws.cell(row=r, column=self._col("J")).value = job.get("company", "")
-            ws.cell(row=r, column=self._col("K")).value = job.get("url", "")
+            # K as a clickable hyperlink.
+            url = job.get("url", "")
+            k_cell = ws.cell(row=r, column=self._col("K"))
+            k_cell.value = url
+            if url:
+                k_cell.hyperlink = url
+                k_cell.font = Font(color="1155CC", underline="single")
             ws.cell(row=r, column=self._col("L")).value = job.get("title", "")
+            # İlan No formula: extract the id between "/jobs/view/" and the next "/"
+            # (works for clean ".../jobs/view/<id>/" URLs and for "...<id>/?..." ones).
             ws.cell(row=r, column=self._col("M")).value = (
                 f'=IFERROR(MID(K{r},FIND("/jobs/view/",K{r})+11,'
-                f'FIND("/?",K{r})-FIND("/jobs/view/",K{r})-11),"")'
+                f'FIND("/",K{r}&"/",FIND("/jobs/view/",K{r})+11)-FIND("/jobs/view/",K{r})-11),"")'
             )
             written.append(r)
             r += 1
