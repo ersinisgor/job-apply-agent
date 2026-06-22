@@ -30,7 +30,10 @@ CV_TEMPLATE_FILE = CONFIG_DIR / "cv_template.docx"
 # Credential files
 SERVICE_ACCOUNT_FILE = CREDENTIALS_DIR / "service_account.json"
 LINKEDIN_STATE_FILE = CREDENTIALS_DIR / "linkedin_state.json"
-HUNTR_STATE_FILE = CREDENTIALS_DIR / "huntr_state.json"
+# Huntr login is Google-SSO gated, which blocks automated browsers. We therefore use
+# a persistent real-Chrome profile (not a storage_state file) so the session sticks
+# and Google's "browser not secure" block is avoided.
+HUNTR_PROFILE_DIR = CREDENTIALS_DIR / "huntr_profile"
 # OAuth (user) credentials for creating Google Docs in Drive
 OAUTH_CLIENT_FILE = CREDENTIALS_DIR / "oauth_client.json"
 OAUTH_TOKEN_FILE = CREDENTIALS_DIR / "oauth_token.json"

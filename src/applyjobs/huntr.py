@@ -16,10 +16,28 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .config import HUNTR_STATE_FILE, settings
+from .config import HUNTR_PROFILE_DIR, settings
 from .scraper import _USER_AGENT, _clean_html_to_text
 
 logger = logging.getLogger(__name__)
+
+
+def launch_huntr_context(pw, headless: bool):
+    """Open a persistent real-Chrome context for Huntr.
+
+    Uses the system Chrome (channel="chrome") and removes the automation flags that
+    make Google show "this browser may not be secure" and block sign-in. The session
+    persists in HUNTR_PROFILE_DIR so login is only needed once.
+    """
+    HUNTR_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    return pw.chromium.launch_persistent_context(
+        user_data_dir=str(HUNTR_PROFILE_DIR),
+        headless=headless,
+        channel="chrome",
+        user_agent=_USER_AGENT,
+        ignore_default_args=["--enable-automation"],
+        args=["--disable-blink-features=AutomationControlled"],
+    )
 
 # Candidate JSON keys for each field (Huntr's exact names are confirmed via debug dump).
 _TITLE_KEYS = ("title", "jobTitle", "position", "role", "name")
@@ -73,14 +91,6 @@ class HuntrClient:
     def __init__(self, headless: bool = True) -> None:
         self._headless = headless
 
-    def _open(self, pw):
-        browser = pw.chromium.launch(headless=self._headless)
-        ctx_kwargs = {"user_agent": _USER_AGENT}
-        if HUNTR_STATE_FILE.exists():
-            ctx_kwargs["storage_state"] = str(HUNTR_STATE_FILE)
-        context = browser.new_context(**ctx_kwargs)
-        return browser, context
-
     def _capture_payloads(self, context) -> list:
         """Load the board and return all JSON response bodies captured during load."""
         payloads: list = []
@@ -106,12 +116,11 @@ class HuntrClient:
         if not settings.huntr_board_url:
             return []
         with sync_playwright() as pw:
-            browser, context = self._open(pw)
+            context = launch_huntr_context(pw, headless=self._headless)
             try:
                 payloads = self._capture_payloads(context)
             finally:
                 context.close()
-                browser.close()
 
         raw: list[dict] = []
         for p in payloads:
@@ -133,7 +142,7 @@ class HuntrClient:
         """Save captured JSON payloads + rendered HTML for finalizing field mapping."""
         out_dir.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as pw:
-            browser, context = self._open(pw)
+            context = launch_huntr_context(pw, headless=self._headless)
             try:
                 payloads = self._capture_payloads(context)
                 page = context.new_page()
@@ -143,7 +152,6 @@ class HuntrClient:
                 page.close()
             finally:
                 context.close()
-                browser.close()
         for i, p in enumerate(payloads):
             try:
                 (out_dir / f"payload_{i:02d}.json").write_text(

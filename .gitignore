@@ -1,6 +1,6 @@
 # Secrets & credentials
 .env
-credentials/*.json
+credentials/
 
 # Local state (processed.json, last_cv_no, huntr_seen.json, ...)
 state/*
