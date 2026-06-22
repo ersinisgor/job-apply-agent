@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import logging
 
-from . import docx_builder, drive_docs, generator
+from . import docx_builder, drive_docs, generator, huntr
 from .config import (
+    HUNTR_SEEN_FILE,
     PROCESSED_STATE_FILE,
     SKIP_BASVURU_VALUES,
     STATE_DIR,
@@ -47,6 +48,107 @@ def save_processed(processed: set[str]) -> None:
     PROCESSED_STATE_FILE.write_text(
         json.dumps(sorted(processed), ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Huntr import
+# --------------------------------------------------------------------------- #
+
+def _norm_url(url: str) -> str:
+    return url.split("?", 1)[0].strip()
+
+
+def load_huntr_seen() -> set[str]:
+    if HUNTR_SEEN_FILE.exists():
+        try:
+            return set(json.loads(HUNTR_SEEN_FILE.read_text(encoding="utf-8")))
+        except (ValueError, OSError):
+            logger.warning("Could not read Huntr seen state; starting fresh.")
+    return set()
+
+
+def save_huntr_seen(seen: set[str]) -> None:
+    HUNTR_SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HUNTR_SEEN_FILE.write_text(
+        json.dumps(sorted(seen), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _infer_work_mode(text: str) -> str:
+    t = text.lower()
+    if "hybrid" in t or "hibrit" in t or "hybrit" in t:
+        return "Hybrit"
+    if "remote" in t or "uzaktan" in t:
+        return "Remote"
+    if "on-site" in t or "onsite" in t or "on site" in t or "in office" in t or "in-office" in t:
+        return "On-site"
+    return ""
+
+
+def _infer_work_type(text: str) -> str:
+    t = text.lower()
+    if "part-time" in t or "part time" in t or "yarı zaman" in t:
+        return "Part-Time"
+    if "contract" in t or "freelance" in t or "sözleşmeli" in t:
+        return "Contract"
+    if "full-time" in t or "full time" in t or "tam zaman" in t:
+        return "Full-Time"
+    return ""
+
+
+def sync_huntr_to_sheet() -> int:
+    """Import new Huntr board jobs into the sheet. Returns rows appended.
+
+    First run (no seen-state file) seeds all current jobs as 'seen' and imports
+    nothing, so an existing Huntr backlog is not dumped into the sheet.
+    """
+    if not settings.huntr_board_url:
+        return 0
+
+    jobs = huntr.HuntrClient(headless=True).fetch_jobs()
+    if not jobs:
+        logger.info("Huntr: no jobs found on the board.")
+        return 0
+
+    first_run = not HUNTR_SEEN_FILE.exists()
+    seen = load_huntr_seen()
+
+    if first_run:
+        seen = {_norm_url(j["url"]) for j in jobs}
+        save_huntr_seen(seen)
+        logger.info("Huntr first run: marked %d existing job(s) as seen; imported 0.", len(seen))
+        return 0
+
+    sheets = SheetsClient()
+    existing_urls = {_norm_url(r.link) for r in sheets.get_rows() if r.link}
+
+    new_jobs = []
+    for j in jobs:
+        key = _norm_url(j["url"])
+        if key in seen or key in existing_urls:
+            continue
+        text = " ".join([j.get("title", ""), j.get("location", ""), j.get("description", "")])
+        new_jobs.append(
+            {
+                "company": j.get("company", ""),
+                "title": j.get("title", ""),
+                "location": j.get("location", ""),
+                "url": j["url"],
+                "work_mode": _infer_work_mode(text),
+                "work_type": _infer_work_type(text),
+            }
+        )
+
+    if not new_jobs:
+        logger.info("Huntr: no new jobs to import.")
+        return 0
+
+    written = sheets.append_job_rows(new_jobs)
+    for j in new_jobs:
+        seen.add(_norm_url(j["url"]))
+    save_huntr_seen(seen)
+    logger.info("Huntr: imported %d new job(s) into rows %s.", len(written), written)
+    return len(written)
 
 
 def is_candidate(row: Row, processed: set[str]) -> bool:

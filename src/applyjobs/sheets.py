@@ -7,6 +7,7 @@ written back to column N.
 """
 from __future__ import annotations
 
+import datetime
 import io
 import string
 from dataclasses import dataclass, field
@@ -222,3 +223,59 @@ class SheetsClient:
             ws.cell(row=row_number, column=MATCH_RATE_COL_INDEX).value = match_rate
         _apply_dropdowns(ws)
         self._upload(wb)
+
+    # --- New-row append (Huntr import) -------------------------------------------
+
+    @staticmethod
+    def _col(letter: str) -> int:
+        return COLUMNS.index(letter) + 1
+
+    def _last_data_row(self, ws) -> int:
+        """Highest row that has data in any key column (A/J/K/L/N)."""
+        key_cols = [self._col(c) for c in ("A", "J", "K", "L", "N")]
+        last = 1
+        for r in range(2, ws.max_row + 1):
+            if any(_cell_to_str(ws.cell(row=r, column=c).value).strip() for c in key_cols):
+                last = r
+        return last
+
+    def append_job_rows(self, jobs: list[dict]) -> list[int]:
+        """Append rows for new jobs. Each job dict may contain:
+        company, title, location, url, work_mode, work_type.
+        Returns the sheet row numbers written. Single download-edit-upload.
+        """
+        if not jobs:
+            return []
+        wb, ws = self._load_workbook()
+        last = self._last_data_row(ws)
+        date_fmt = ws.cell(row=last, column=self._col("E")).number_format if last >= 2 else None
+        last_a = self._as_int(_cell_to_str(ws.cell(row=last, column=self._col("A")).value))
+        today = datetime.datetime(*datetime.date.today().timetuple()[:3])
+
+        written: list[int] = []
+        r = last + 1
+        for job in jobs:
+            if last_a is not None:
+                last_a += 1
+                ws.cell(row=r, column=self._col("A")).value = last_a
+            e_cell = ws.cell(row=r, column=self._col("E"))
+            e_cell.value = today
+            if date_fmt:
+                e_cell.number_format = date_fmt
+            ws.cell(row=r, column=self._col("F")).value = job.get("location", "")
+            ws.cell(row=r, column=self._col("G")).value = job.get("work_mode", "")
+            ws.cell(row=r, column=self._col("H")).value = job.get("work_type", "")
+            ws.cell(row=r, column=self._col("I")).value = "İş"
+            ws.cell(row=r, column=self._col("J")).value = job.get("company", "")
+            ws.cell(row=r, column=self._col("K")).value = job.get("url", "")
+            ws.cell(row=r, column=self._col("L")).value = job.get("title", "")
+            ws.cell(row=r, column=self._col("M")).value = (
+                f'=IFERROR(MID(K{r},FIND("/jobs/view/",K{r})+11,'
+                f'FIND("/?",K{r})-FIND("/jobs/view/",K{r})-11),"")'
+            )
+            written.append(r)
+            r += 1
+
+        _apply_dropdowns(ws)
+        self._upload(wb)
+        return written

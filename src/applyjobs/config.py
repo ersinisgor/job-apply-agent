@@ -30,12 +30,14 @@ CV_TEMPLATE_FILE = CONFIG_DIR / "cv_template.docx"
 # Credential files
 SERVICE_ACCOUNT_FILE = CREDENTIALS_DIR / "service_account.json"
 LINKEDIN_STATE_FILE = CREDENTIALS_DIR / "linkedin_state.json"
+HUNTR_STATE_FILE = CREDENTIALS_DIR / "huntr_state.json"
 # OAuth (user) credentials for creating Google Docs in Drive
 OAUTH_CLIENT_FILE = CREDENTIALS_DIR / "oauth_client.json"
 OAUTH_TOKEN_FILE = CREDENTIALS_DIR / "oauth_token.json"
 
 # State
 PROCESSED_STATE_FILE = STATE_DIR / "processed.json"
+HUNTR_SEEN_FILE = STATE_DIR / "huntr_seen.json"
 
 # Values in the "Başvuru" (B) column that should NOT trigger CV generation.
 SKIP_BASVURU_VALUES = {"Geçmiş", "Vazgeçildi", "Başvurulmuş", "✓"}
@@ -57,6 +59,8 @@ class Settings:
     job_description_dir: Path
     resumes_folder_name: str
     resumes_folder_id: str
+    huntr_board_url: str
+    huntr_poll_interval: int
 
     @classmethod
     def load(cls) -> "Settings":
@@ -74,6 +78,9 @@ class Settings:
             job_description_dir=_expand(os.getenv("JOB_DESCRIPTION_DIR", default_jd)),
             resumes_folder_name=os.getenv("RESUMES_FOLDER_NAME", "Resumes Based on Jobs"),
             resumes_folder_id=os.getenv("RESUMES_FOLDER_ID", ""),
+            # Huntr is OFF unless a board URL is provided (feature flag).
+            huntr_board_url=os.getenv("HUNTR_BOARD_URL", ""),
+            huntr_poll_interval=int(os.getenv("HUNTR_POLL_INTERVAL", "300")),
         )
 
     def validate(self) -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.applyjobs.config import settings  # noqa: E402
-from src.applyjobs.pipeline import run_scan  # noqa: E402
+from src.applyjobs.pipeline import run_scan, sync_huntr_to_sheet  # noqa: E402
 
 
 def main() -> None:
@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="List candidates only.")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N candidates.")
     parser.add_argument("--row", type=int, default=None, help="Process only this sheet row number.")
+    parser.add_argument(
+        "--huntr", action="store_true", help="Sync new Huntr jobs into the sheet first."
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -34,8 +37,12 @@ def main() -> None:
 
     settings.validate()
     settings.ensure_dirs()
+    log = logging.getLogger("applyjobs")
+    if args.huntr:
+        imported = sync_huntr_to_sheet()
+        log.info("Huntr: %d new job(s) imported.", imported)
     count = run_scan(dry_run=args.dry_run, limit=args.limit, only_row=args.row)
-    logging.getLogger("applyjobs").info("Done. Processed %d row(s).", count)
+    log.info("Done. Processed %d row(s).", count)
 
 
 if __name__ == "__main__":
