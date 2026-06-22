@@ -91,7 +91,11 @@ Yani `+`, `++` veya boş olanlar işlenir.
 
 ## Huntr entegrasyonu (opsiyonel)
 
-Açıkken, Huntr board'una kaydettiğin yeni ilanları otomatik sheet'e yazar (sonra CV üretilir).
+Açıkken, Huntr board'una kaydettiğin yeni ilanın **linkini** sheet'e (K) yazar. Sonra uygulama o
+linke gidip ilan sayfasından **Firma (J, tıklanabilir), Pozisyon (L), Yer (F), Çalışma Şekli (H)**
+sütunlarını doldurur (sadece boş hücreleri) ve CV üretir.
+- **G (Uzaktan)** otomatik doldurulmaz → elle girersin (LinkedIn bu bilgiyi otomasyona vermiyor).
+- **C (Easy Apply)** LinkedIn ilanlarında boş kalır (elle), LinkedIn dışı linklerde "Yok".
 
 **Açma:** `.env`'de `HUNTR_BOARD_URL=<board adresin>` ayarla. **Kapatma:** o satırı boş bırak/sil
 → uygulama Huntr'sız eski hâline döner (kod değişmez).
