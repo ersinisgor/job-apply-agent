@@ -1,13 +1,11 @@
 """Orchestration: detect new rows, generate CVs, save files, write back CV No."""
 from __future__ import annotations
 
-import json
 import logging
 
 from . import docx_builder, drive_docs, generator, huntr
 from .config import (
     HUNTR_CURSOR_FILE,
-    PROCESSED_STATE_FILE,
     SKIP_BASVURU_VALUES,
     STATE_DIR,
     settings,
@@ -32,22 +30,6 @@ def load_last_cv_no() -> int:
 def save_last_cv_no(value: int) -> None:
     LAST_CV_FILE.parent.mkdir(parents=True, exist_ok=True)
     LAST_CV_FILE.write_text(str(value), encoding="utf-8")
-
-
-def load_processed() -> set[str]:
-    if PROCESSED_STATE_FILE.exists():
-        try:
-            return set(json.loads(PROCESSED_STATE_FILE.read_text(encoding="utf-8")))
-        except (ValueError, OSError):
-            logger.warning("Could not read processed state; starting fresh.")
-    return set()
-
-
-def save_processed(processed: set[str]) -> None:
-    PROCESSED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROCESSED_STATE_FILE.write_text(
-        json.dumps(sorted(processed), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -119,20 +101,24 @@ def sync_huntr_to_sheet() -> int:
     return len(written)
 
 
-def is_candidate(row: Row, processed: set[str]) -> bool:
+def is_candidate(row: Row) -> bool:
+    """A row needs a CV when it has a link, no CV No yet, and a non-skip Başvuru.
+
+    The CV No (column N) is the single source of truth: filled = done, empty = to do.
+    This makes 'delete row + re-add the same job' work — the fresh row has an empty N
+    so it is processed again, regardless of any past run.
+    """
     if not row.link:
         return False
     if row.cv_no:  # already has a CV number
         return False
     if row.basvuru in SKIP_BASVURU_VALUES:
         return False
-    if row.key() in processed:
-        return False
     return True
 
 
-def find_candidates(rows: list[Row], processed: set[str]) -> list[Row]:
-    return [r for r in rows if is_candidate(r, processed)]
+def find_candidates(rows: list[Row]) -> list[Row]:
+    return [r for r in rows if is_candidate(r)]
 
 
 def _save_outputs(cv_no: int, cv_md: str, full_response: str, job_description: str) -> None:
@@ -205,15 +191,14 @@ def run_scan(
     """
     sheets = SheetsClient()
     rows = sheets.get_rows()
-    processed = load_processed()
-    candidates = find_candidates(rows, processed)
+    candidates = find_candidates(rows)
 
     if only_row is not None:
         candidates = [r for r in candidates if r.number == only_row]
         if not candidates:
             logger.warning(
-                "Row %d is not a candidate (check: has link? CV No empty? "
-                "Başvuru not in %s? not already processed?).",
+                "Row %d is not a candidate (check: has link? CV No (N) empty? "
+                "Başvuru not in %s?).",
                 only_row,
                 sorted(SKIP_BASVURU_VALUES),
             )
@@ -265,7 +250,5 @@ def run_scan(
                 )
                 continue
 
-            processed.add(row.key())
-            save_processed(processed)
             count += 1
     return count
