@@ -31,6 +31,13 @@ def launch_huntr_context(pw, headless: bool):
     persists in HUNTR_PROFILE_DIR so login is only needed once.
     """
     HUNTR_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    # Remove stale Chrome lock files left by a previous crashed/uncleaned run, which
+    # otherwise cause "profile already in use". Safe for our single, sequential use.
+    for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (HUNTR_PROFILE_DIR / lock).unlink()
+        except (FileNotFoundError, OSError):
+            pass
     return pw.chromium.launch_persistent_context(
         user_data_dir=str(HUNTR_PROFILE_DIR),
         headless=headless,
