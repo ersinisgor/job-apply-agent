@@ -69,6 +69,24 @@ def _normalize_url(url: str) -> str:
     return url
 
 
+def _simplify_location(loc: str) -> str:
+    """Reduce Huntr's (sometimes geocoded) address to a short city-like value.
+
+    'Istanbul, Turkey' -> 'Istanbul'; 'Remote' -> 'Remote'. Drops purely numeric or
+    postal-code segments and keeps the first meaningful part.
+    """
+    loc = (loc or "").strip()
+    if not loc:
+        return ""
+    parts = [p.strip() for p in loc.split(",") if p.strip()]
+    parts = [
+        p for p in parts
+        if not re.fullmatch(r"[\d\s\-]+", p)  # "11", "10111"
+        and not re.fullmatch(r"[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d", p)  # postal "R2K 3A5"
+    ]
+    return parts[0] if parts else loc.split(",")[0].strip()
+
+
 def parse_board(payload: dict) -> list[dict]:
     """Join Huntr jobs with companies into {company,title,location,url,description}."""
     comp_name = {}
@@ -88,9 +106,10 @@ def parse_board(payload: dict) -> list[dict]:
             {
                 "company": comp_name.get(j.get("_company"), ""),
                 "title": (j.get("title") or "").strip(),
-                "location": (location or "").strip(),
+                "location": _simplify_location(location),
                 "url": url,
                 "description": _clean_html_to_text(j.get("htmlDescription", "")),
+                "created_at": (j.get("createdAt") or "").strip(),
             }
         )
     return jobs

@@ -40,7 +40,8 @@ OAUTH_TOKEN_FILE = CREDENTIALS_DIR / "oauth_token.json"
 
 # State
 PROCESSED_STATE_FILE = STATE_DIR / "processed.json"
-HUNTR_SEEN_FILE = STATE_DIR / "huntr_seen.json"
+# Highest Huntr job createdAt we've already accounted for (ISO-8601 string).
+HUNTR_CURSOR_FILE = STATE_DIR / "huntr_cursor.txt"
 
 # Values in the "Başvuru" (B) column that should NOT trigger CV generation.
 SKIP_BASVURU_VALUES = {"Geçmiş", "Vazgeçildi", "Başvurulmuş", "✓"}
@@ -83,7 +84,7 @@ class Settings:
             resumes_folder_id=os.getenv("RESUMES_FOLDER_ID", ""),
             # Huntr is OFF unless a board URL is provided (feature flag).
             huntr_board_url=os.getenv("HUNTR_BOARD_URL", ""),
-            huntr_poll_interval=int(os.getenv("HUNTR_POLL_INTERVAL", "300")),
+            huntr_poll_interval=int(os.getenv("HUNTR_POLL_INTERVAL", "30")),
         )
 
     def validate(self) -> None:

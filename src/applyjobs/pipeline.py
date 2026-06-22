@@ -6,7 +6,7 @@ import logging
 
 from . import docx_builder, drive_docs, generator, huntr
 from .config import (
-    HUNTR_SEEN_FILE,
+    HUNTR_CURSOR_FILE,
     PROCESSED_STATE_FILE,
     SKIP_BASVURU_VALUES,
     STATE_DIR,
@@ -58,20 +58,16 @@ def _norm_url(url: str) -> str:
     return url.split("?", 1)[0].strip()
 
 
-def load_huntr_seen() -> set[str]:
-    if HUNTR_SEEN_FILE.exists():
-        try:
-            return set(json.loads(HUNTR_SEEN_FILE.read_text(encoding="utf-8")))
-        except (ValueError, OSError):
-            logger.warning("Could not read Huntr seen state; starting fresh.")
-    return set()
+def load_huntr_cursor() -> str | None:
+    """Highest Huntr job createdAt already accounted for (None on first ever run)."""
+    if HUNTR_CURSOR_FILE.exists():
+        return HUNTR_CURSOR_FILE.read_text(encoding="utf-8").strip()
+    return None
 
 
-def save_huntr_seen(seen: set[str]) -> None:
-    HUNTR_SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    HUNTR_SEEN_FILE.write_text(
-        json.dumps(sorted(seen), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+def save_huntr_cursor(created_at: str) -> None:
+    HUNTR_CURSOR_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HUNTR_CURSOR_FILE.write_text(created_at or "", encoding="utf-8")
 
 
 def _infer_work_mode(text: str) -> str:
@@ -97,10 +93,12 @@ def _infer_work_type(text: str) -> str:
 
 
 def sync_huntr_to_sheet() -> int:
-    """Import new Huntr board jobs into the sheet. Returns rows appended.
+    """Import newly-saved Huntr board jobs into the sheet. Returns rows appended.
 
-    First run (no seen-state file) seeds all current jobs as 'seen' and imports
-    nothing, so an existing Huntr backlog is not dumped into the sheet.
+    A job counts as new when its createdAt is later than the stored cursor AND its URL
+    is not already in the sheet. First ever run sets the cursor to the newest existing
+    job and imports nothing (no backlog dump). Deleting then re-saving a job in Huntr
+    gives it a fresh createdAt, so it can be re-imported (if no longer in the sheet).
     """
     if not settings.huntr_board_url:
         return 0
@@ -110,13 +108,13 @@ def sync_huntr_to_sheet() -> int:
         logger.info("Huntr: no jobs found on the board.")
         return 0
 
-    first_run = not HUNTR_SEEN_FILE.exists()
-    seen = load_huntr_seen()
+    created_values = [j.get("created_at", "") for j in jobs if j.get("created_at")]
+    max_created = max(created_values) if created_values else ""
+    cursor = load_huntr_cursor()
 
-    if first_run:
-        seen = {_norm_url(j["url"]) for j in jobs}
-        save_huntr_seen(seen)
-        logger.info("Huntr first run: marked %d existing job(s) as seen; imported 0.", len(seen))
+    if cursor is None:  # first ever run
+        save_huntr_cursor(max_created)
+        logger.info("Huntr first run: cursor set to %s; imported 0 (existing backlog skipped).", max_created)
         return 0
 
     sheets = SheetsClient()
@@ -124,8 +122,9 @@ def sync_huntr_to_sheet() -> int:
 
     new_jobs = []
     for j in jobs:
-        key = _norm_url(j["url"])
-        if key in seen or key in existing_urls:
+        if j.get("created_at", "") <= cursor:
+            continue
+        if _norm_url(j["url"]) in existing_urls:
             continue
         text = " ".join([j.get("title", ""), j.get("location", ""), j.get("description", "")])
         new_jobs.append(
@@ -139,14 +138,15 @@ def sync_huntr_to_sheet() -> int:
             }
         )
 
+    # Advance the cursor past everything currently on the board so we don't re-check it.
+    if max_created and max_created > cursor:
+        save_huntr_cursor(max_created)
+
     if not new_jobs:
         logger.info("Huntr: no new jobs to import.")
         return 0
 
     written = sheets.append_job_rows(new_jobs)
-    for j in new_jobs:
-        seen.add(_norm_url(j["url"]))
-    save_huntr_seen(seen)
     logger.info("Huntr: imported %d new job(s) into rows %s.", len(written), written)
     return len(written)
 

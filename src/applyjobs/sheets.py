@@ -249,7 +249,13 @@ class SheetsClient:
         wb, ws = self._load_workbook()
         last = self._last_data_row(ws)
         date_fmt = ws.cell(row=last, column=self._col("E")).number_format if last >= 2 else None
-        last_a = self._as_int(_cell_to_str(ws.cell(row=last, column=self._col("A")).value))
+        # Find the most recent numeric "No" (A) by scanning upward, to continue numbering.
+        last_a = None
+        for rr in range(last, 1, -1):
+            v = self._as_int(_cell_to_str(ws.cell(row=rr, column=self._col("A")).value))
+            if v is not None:
+                last_a = v
+                break
         today = datetime.datetime(*datetime.date.today().timetuple()[:3])
 
         written: list[int] = []

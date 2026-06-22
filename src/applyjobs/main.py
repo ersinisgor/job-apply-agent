@@ -32,17 +32,16 @@ def main() -> None:
         settings.output_dir,
     )
 
-    last_huntr = 0.0  # 0 forces a Huntr sync on the first iteration
+    interval = settings.huntr_poll_interval if huntr_enabled else settings.poll_interval
     while True:
         try:
-            if huntr_enabled and time.monotonic() - last_huntr >= settings.huntr_poll_interval:
+            if huntr_enabled:
                 try:
                     imported = sync_huntr_to_sheet()
                     if imported:
                         log.info("Huntr: %d new job(s) imported into the sheet.", imported)
                 except Exception:  # noqa: BLE001
                     log.exception("Huntr sync failed; continuing with sheet scan.")
-                last_huntr = time.monotonic()
 
             processed = run_scan(dry_run=False)
             if processed:
@@ -52,7 +51,7 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             log.exception("Scan failed; will retry next interval.")
         try:
-            time.sleep(settings.poll_interval)
+            time.sleep(interval)
         except KeyboardInterrupt:
             break
 
