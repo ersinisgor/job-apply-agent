@@ -52,10 +52,19 @@ def _expand(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str)).resolve()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "on", "yes", "evet", "açık")
+
+
 @dataclass(frozen=True)
 class Settings:
     anthropic_api_key: str
     claude_model: str
+    claude_effort: str
+    cv_review: bool
     spreadsheet_id: str
     sheet_name: str
     poll_interval: int
@@ -75,6 +84,10 @@ class Settings:
         return cls(
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
+            # Reasoning effort: none / low / medium / high (extended thinking budget).
+            claude_effort=os.getenv("CLAUDE_EFFORT", "none").strip().lower(),
+            # Second expert QA pass on each CV (on by default).
+            cv_review=_env_bool("CV_REVIEW", True),
             spreadsheet_id=os.getenv("SPREADSHEET_ID", ""),
             sheet_name=os.getenv("SHEET_NAME", "Sayfa1"),
             poll_interval=int(os.getenv("POLL_INTERVAL", "60")),

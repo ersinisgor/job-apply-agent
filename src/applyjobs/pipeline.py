@@ -166,19 +166,21 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
         jp.description, work_mode=work_mode, city=city
     )
 
-    # Expert QA second pass: re-check the draft against the job (keyword coverage,
-    # accuracy, structure, match rate) and fix problems. Fall back to the draft on error.
+    # Expert QA second pass (toggle via CV_REVIEW): re-check the draft against the job
+    # (keyword coverage, accuracy, structure, match rate) and fix problems. Fall back
+    # to the draft on error.
     review_full = ""
-    try:
-        review_full, cv_reviewed, reviewed_rate = generator.review(
-            jp.description, cv_md, work_mode=work_mode, city=city
-        )
-        cv_md = cv_reviewed
-        if reviewed_rate is not None:
-            match_rate = reviewed_rate
-        logger.info("Review pass done for cv_%d (final match rate: %s).", cv_no, match_rate)
-    except Exception:  # noqa: BLE001
-        logger.exception("Review pass failed for cv_%d; using the first draft.", cv_no)
+    if settings.cv_review:
+        try:
+            review_full, cv_reviewed, reviewed_rate = generator.review(
+                jp.description, cv_md, work_mode=work_mode, city=city
+            )
+            cv_md = cv_reviewed
+            if reviewed_rate is not None:
+                match_rate = reviewed_rate
+            logger.info("Review pass done for cv_%d (final match rate: %s).", cv_no, match_rate)
+        except Exception:  # noqa: BLE001
+            logger.exception("Review pass failed for cv_%d; using the first draft.", cv_no)
 
     _save_outputs(cv_no, cv_md, full_response, jp.description)
     if review_full:

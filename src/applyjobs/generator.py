@@ -25,6 +25,9 @@ _MATCH_RATE_RE = re.compile(r"<MATCH_RATE>\s*(\d+(?:\.\d+)?)\s*</MATCH_RATE>")
 
 MAX_TOKENS = 8000
 
+# Reasoning effort -> extended-thinking token budget. "none" disables thinking.
+_EFFORT_BUDGET = {"low": 4096, "medium": 8192, "high": 16384}
+
 
 BASE_RELOCATION_SENTENCE = "Open to relocation and on-site or hybrid opportunities."
 
@@ -86,11 +89,20 @@ def _extract_match_rate(full_response: str) -> float | None:
 
 def _call_model(prompt: str) -> str:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    message = client.messages.create(
-        model=settings.claude_model,
-        max_tokens=MAX_TOKENS,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    kwargs = {
+        "model": settings.claude_model,
+        "max_tokens": MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    budget = _EFFORT_BUDGET.get(settings.claude_effort)
+    if budget:
+        # Extended thinking: max_tokens must leave room for output beyond the budget.
+        kwargs["max_tokens"] = budget + MAX_TOKENS
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    # Stream so large (high-effort) requests aren't blocked by the 10-min non-stream limit.
+    with client.messages.stream(**kwargs) as stream:
+        message = stream.get_final_message()
+    # Only collect answer text; skip "thinking" blocks.
     return "".join(
         block.text for block in message.content if getattr(block, "type", "") == "text"
     )
