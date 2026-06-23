@@ -12,6 +12,7 @@ import anthropic
 
 from .config import (
     ATS_PROMPT_FILE,
+    ATS_REVIEW_PROMPT_FILE,
     CV_BASE_FILE,
     PROJECTS_LIST_FILE,
     settings,
@@ -83,22 +84,43 @@ def _extract_match_rate(full_response: str) -> float | None:
     return float(match.group(1))
 
 
-def generate(
-    job_description: str, work_mode: str = "", city: str = ""
-) -> tuple[str, str, float | None]:
-    """Return (full_response, optimized_cv_markdown, match_rate)."""
+def _call_model(prompt: str) -> str:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    prompt = _build_prompt(job_description, work_mode, city)
-
-    logger.info("Requesting CV from %s ...", settings.claude_model)
     message = client.messages.create(
         model=settings.claude_model,
         max_tokens=MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     )
-    full = "".join(
+    return "".join(
         block.text for block in message.content if getattr(block, "type", "") == "text"
     )
-    cv_md = _extract_cv(full)
-    match_rate = _extract_match_rate(full)
-    return full, cv_md, match_rate
+
+
+def generate(
+    job_description: str, work_mode: str = "", city: str = ""
+) -> tuple[str, str, float | None]:
+    """Return (full_response, optimized_cv_markdown, match_rate)."""
+    prompt = _build_prompt(job_description, work_mode, city)
+    logger.info("Requesting CV from %s ...", settings.claude_model)
+    full = _call_model(prompt)
+    return full, _extract_cv(full), _extract_match_rate(full)
+
+
+def review(
+    job_description: str, cv_draft: str, work_mode: str = "", city: str = ""
+) -> tuple[str, str, float | None]:
+    """Second expert pass: verify the draft CV against the job and FIX problems.
+
+    Returns (full_review_response, corrected_cv_markdown, final_match_rate).
+    """
+    template = ATS_REVIEW_PROMPT_FILE.read_text(encoding="utf-8")
+    prompt = (
+        template.replace("{{PROJECTS_LIST}}", PROJECTS_LIST_FILE.read_text(encoding="utf-8"))
+        .replace("{{CV_BASE}}", CV_BASE_FILE.read_text(encoding="utf-8"))
+        .replace("{{SUMMARY_RELOCATION_RULE}}", _relocation_instruction(work_mode, city))
+        .replace("{{JOB_DESCRIPTION}}", job_description.strip())
+        .replace("{{CV_DRAFT}}", cv_draft.strip())
+    )
+    logger.info("Reviewing CV (expert QA pass) with %s ...", settings.claude_model)
+    full = _call_model(prompt)
+    return full, _extract_cv(full), _extract_match_rate(full)
