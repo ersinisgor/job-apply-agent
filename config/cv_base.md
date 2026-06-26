@@ -22,28 +22,28 @@ Backend Developer focused on building scalable REST APIs and backend systems usi
 * Worked in Agile sprints with task tracking and code reviews
 
 ### SELECTED PROJECTS
-#### AI Knowledge Base Assistant - Full-Stack RAG Platform
+#### [AI Knowledge Base Assistant - Full-Stack RAG Platform](https://github.com/ersinisgor/AI-Knowledge-Base-Assistant)
 * Built a production-style RAG platform that ingests documents, generates embeddings, and provides AI-powered Q&A with source attribution
 * Developed NestJS services for ingestion pipelines, vector retrieval, query rewriting, confidence  and token-budgeted context assembly
 * Implemented pgvector-based semantic search with OpenAI embeddings, LangChain chunking, and GPT-powered retrieval workflows
 * Built a Next.js frontend with chat interface, document management, streaming responses, and retrieval analytics dashboard <br>
 Tech: NestJS, Next.js, TypeScript, PostgreSQL (pgvector), Supabase, OpenAI API, LangChain, Tailwind CSS
 
-#### English Vocabulary Trainer - Full-Stack Learning Platform *(Ongoing)*
+#### [English Vocabulary Trainer - Full-Stack Learning Platform (Ongoing)](https://github.com/ersinisgor/English_Vocabulary_Trainer)
 * Built a full-stack learning platform with NestJS and Next.js using scalable, modular architecture and clean design principles
 * Developed a customizable exercise engine with dynamic filtering, algorithm-driven scheduling logic, and flexible learning workflows
 * Implemented JWT authentication, Excel import, file uploads, and Swagger-documented REST APIs for production-ready backend services
 * Wrote unit and E2E tests while integrating PostgreSQL, Prisma ORM, Multer, Dockerized services, and user-scoped data isolation <br>
 Tech: NestJS, Next.js, TypeScript, PostgreSQL, Prisma ORM, JWT, Docker, Jest, Swagger, Multer
 
-#### Library Management System – Backend API (NestJS)
+#### [Library Management System – Backend API (NestJS)](https://github.com/ersinisgor/Nest.js-Library-Management-System)
 * Built 30+ REST endpoints with JWT-based role-based access control (RBAC)
 * Implemented borrowing rules, renewals, and automated fine system
 * Designed relational schema with TypeORM and validations
 * Structured project using layered modular architecture <br>
 Tech: NestJS, TypeScript, PostgreSQL, TypeORM, JWT
 
-#### Cloud File Storage Platform – Microservices (.NET)
+#### [Cloud File Storage Platform – Microservices (.NET)](https://github.com/ersinisgor/.NET-Cloud-File-Storage-Microservice)
 * Built secure file upload/download microservices using ASP.NET Core
 * Designed JWT-based authentication and API Gateway architecture
 * Applied CQRS with MediatR, integrated PostgreSQL persistence, and containerized services with Docker <br>

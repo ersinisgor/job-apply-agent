@@ -455,6 +455,10 @@ The content between `<CV_START>` and `<CV_END>` will be saved directly as the ca
 - DO NOT change heading levels (do not turn `###` into `##` or `#`), and do not re-style headings.
 - Only the WORDING inside sections may change (inserted keywords in **bold** per STEP 10, reordered
   skills, optimized bullets, swapped projects per STEP 8). The skeleton stays identical.
+- **Project titles MUST be GitHub Markdown links**, exactly like the original base CV:
+  `#### [Project Title](https://github.com/...)`. Use the **GitHub** URL from the Projects List for
+  each project. If you swap in a different project (STEP 8), use THAT project's GitHub URL. Never
+  invent a URL; if a project has no GitHub URL in the Projects List, keep its title as plain text.
 
 The result must be the clean, final, one-page CV in English and nothing else.
 

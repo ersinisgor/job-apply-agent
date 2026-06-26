@@ -21,7 +21,7 @@ STATE_DIR = PROJECT_ROOT / "state"
 
 # Config asset files
 CV_BASE_FILE = CONFIG_DIR / "cv_base.md"
-PROJECTS_LIST_FILE = CONFIG_DIR / "projects_list.md"
+PROJECTS_LIST_FILE = CONFIG_DIR / "projects.md"
 ATS_PROMPT_FILE = CONFIG_DIR / "ats_prompt.md"
 ATS_REVIEW_PROMPT_FILE = CONFIG_DIR / "ats_review_prompt.md"
 

@@ -22,6 +22,8 @@ technologies that appear in the Projects List or the base CV.
    `#` levels (`### SUMMARY`, `### CORE SKILLS`, `### EXPERIENCE`, `### SELECTED PROJECTS`,
    `### EDUCATION`, `### PREVIOUS EXPERIENCE`), same `<br>` / `Tech:` lines, `*` bullets, blank lines.
    NO name/contact header, NO horizontal rules (`---`), NO emojis, NO extra sections.
+   **Project titles must be GitHub Markdown links** `#### [Title](https://github.com/...)` using the
+   correct GitHub URL from the Projects List for the project shown; fix any wrong/missing project link.
 4. **Bold = DIFF vs the ORIGINAL base CV:** every word/phrase that differs from the base CV must be
    **bold**; anything unchanged from the base stays non-bold. Verify the bolding is a correct diff.
 5. **One page:** each bullet must fit ~one line (use these as the one-line width reference):

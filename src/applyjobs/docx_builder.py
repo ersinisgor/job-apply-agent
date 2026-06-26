@@ -40,6 +40,21 @@ def _strip_md(text: str) -> str:
     return text.strip()
 
 
+_TITLE_LINK_RE = re.compile(r"^\[(?P<disp>.+?)\]\((?P<url>[^)\s]+)\)(?P<rest>.*)$")
+
+
+def _parse_title_link(text: str):
+    """A project title '[Display](https://github.com/...)' -> (display_text, url).
+
+    Returns (plain_title, "") when there is no link.
+    """
+    m = _TITLE_LINK_RE.match(text.strip())
+    if m:
+        display = (m.group("disp") + m.group("rest")).strip()
+        return _strip_md(display), m.group("url").strip()
+    return _strip_md(text), ""
+
+
 def parse_markdown_cv(md: str) -> dict:
     """Parse the generated CV markdown into structured, plain-text sections."""
     lines = md.splitlines()
@@ -78,7 +93,8 @@ def parse_markdown_cv(md: str) -> dict:
 
         elif section == "SELECTED PROJECTS":
             if stripped.startswith("#### "):
-                cur_project = {"title": _strip_md(stripped[5:]), "bullets": [], "tech": ""}
+                disp, url = _parse_title_link(stripped[5:])
+                cur_project = {"title": disp, "title_url": url, "bullets": [], "tech": ""}
                 projects.append(cur_project)
             elif cur_project is not None and stripped.lower().startswith("tech:"):
                 cur_project["tech"] = _strip_md(stripped.split(":", 1)[1])
@@ -148,6 +164,17 @@ def _set_bullet_text(p, text: str) -> None:
     _set_node(nodes[0], "• " + text)
     for n in nodes[1:]:
         _set_node(n, "")
+
+
+def _set_hyperlink_target(p, url: str) -> None:
+    """Point the paragraph's hyperlink (e.g. a project title) at `url`."""
+    hl = p._p.find(qn("w:hyperlink"))
+    if hl is None:
+        return
+    rid = hl.get(qn("r:id"))
+    rels = p.part.rels
+    if rid and rid in rels:
+        rels[rid]._target = url
 
 
 def _is_bullet(p) -> bool:
@@ -269,6 +296,8 @@ def build_docx(markdown_cv: str) -> bytes:
 
     for slot, proj in zip(blocks, data["projects"]):
         _replace_content(slot["title"], proj["title"], keep_prefix_nodes=0)
+        if proj.get("title_url"):
+            _set_hyperlink_target(slot["title"], proj["title_url"])
         if slot["bullets"]:
             _fill_bullets(slot["bullets"], proj["bullets"])
         if slot["tech"] is not None and proj["tech"]:

@@ -24,9 +24,13 @@ _CV_MARKER_RE = re.compile(r"<CV_START>\s*(.*?)\s*<CV_END>", re.DOTALL)
 _MATCH_RATE_RE = re.compile(r"<MATCH_RATE>\s*(\d+(?:\.\d+)?)\s*</MATCH_RATE>")
 
 MAX_TOKENS = 8000
+# When adaptive thinking is on, the reply also contains thinking tokens (counted
+# against max_tokens), so give generous headroom — streaming makes this safe.
+MAX_TOKENS_THINKING = 32000
 
-# Reasoning effort -> extended-thinking token budget. "none" disables thinking.
-_EFFORT_BUDGET = {"low": 4096, "medium": 8192, "high": 16384}
+# Reasoning effort levels accepted by output_config.effort on Sonnet 4.6 / Opus 4.x.
+# "none" => no extended thinking (a plain, fast request).
+_EFFORT_LEVELS = {"low", "medium", "high", "max"}
 
 
 BASE_RELOCATION_SENTENCE = "Open to relocation and on-site or hybrid opportunities."
@@ -94,11 +98,13 @@ def _call_model(prompt: str) -> str:
         "max_tokens": MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }
-    budget = _EFFORT_BUDGET.get(settings.claude_effort)
-    if budget:
-        # Extended thinking: max_tokens must leave room for output beyond the budget.
-        kwargs["max_tokens"] = budget + MAX_TOKENS
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    effort = settings.claude_effort
+    if effort in _EFFORT_LEVELS:
+        # Adaptive thinking + effort is the current API (budget_tokens is rejected on
+        # Sonnet 4.6 / Opus 4.x). Effort controls how much the model thinks.
+        kwargs["max_tokens"] = MAX_TOKENS_THINKING
+        kwargs["thinking"] = {"type": "adaptive"}
+        kwargs["output_config"] = {"effort": effort}
     # Stream so large (high-effort) requests aren't blocked by the 10-min non-stream limit.
     with client.messages.stream(**kwargs) as stream:
         message = stream.get_final_message()
