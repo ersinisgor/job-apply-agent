@@ -199,6 +199,104 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
     return match_rate, fields
 
 
+def _regenerate_one(cv_no: int, row: Row) -> float | None:
+    """Regenerate a single CV from its SAVED job description (no re-scrape).
+
+    The original page text was stored as job_description_<no>.md when the CV was first
+    made; re-using it is robust against expired/removed LinkedIn postings and avoids a
+    long burst of scraping. Work mode (G) and city (F) come from the sheet row.
+    Overwrites cv_<no>.md/.docx/_analysis/_review and updates the same-named Google Doc.
+    Returns the final match rate (or None).
+    """
+    jd_path = settings.job_description_dir / f"job_description_{cv_no}.md"
+    if not jd_path.exists():
+        raise FileNotFoundError(f"Saved job description not found: {jd_path}")
+    job_description = jd_path.read_text(encoding="utf-8").strip()
+    if not job_description:
+        raise ValueError(f"Saved job description is empty: {jd_path}")
+
+    work_mode = row.work_mode  # manual G (often empty -> default relocation sentence)
+    city = row.city
+    full_response, cv_md, match_rate = generator.generate(
+        job_description, work_mode=work_mode, city=city
+    )
+
+    review_full = ""
+    if settings.cv_review:
+        try:
+            review_full, cv_reviewed, reviewed_rate = generator.review(
+                job_description, cv_md, work_mode=work_mode, city=city
+            )
+            cv_md = cv_reviewed
+            if reviewed_rate is not None:
+                match_rate = reviewed_rate
+            logger.info("Review pass done for cv_%d (final match rate: %s).", cv_no, match_rate)
+        except Exception:  # noqa: BLE001
+            logger.exception("Review pass failed for cv_%d; using the first draft.", cv_no)
+
+    _save_outputs(cv_no, cv_md, full_response, job_description)
+    if review_full:
+        settings.ensure_dirs()
+        (settings.analysis_dir / f"cv_{cv_no}_review.md").write_text(review_full, encoding="utf-8")
+    _export_google_doc(cv_no, cv_md)
+    return match_rate
+
+
+def regenerate_cv_range(start: int, end: int, dry_run: bool = False) -> int:
+    """Re-generate CVs whose CV No (column N) is in [start, end], keeping the same
+    numbers. Regenerates from each CV's SAVED job description (no re-scrape), overwrites
+    cv_<no>.md/.docx/_analysis/_review, updates the same-named Google Doc, and refreshes
+    Match Rate (P). Other sheet columns are left untouched.
+
+    Uses whatever model/effort the current settings define, so run it with the env
+    overridden to pick a stronger model, e.g.:
+        CLAUDE_MODEL=claude-opus-4-8 CLAUDE_EFFORT=high python scripts/regenerate.py --from 200 --to 219
+    """
+    sheets = SheetsClient()
+    rows = sheets.get_rows()
+
+    targets: list[tuple[int, Row]] = []
+    for r in rows:
+        n = SheetsClient._as_int(r.cv_no)
+        if n is not None and start <= n <= end:
+            targets.append((n, r))
+    targets.sort(key=lambda t: t[0])
+
+    if not targets:
+        logger.info("No rows with CV No in [%d, %d].", start, end)
+        return 0
+
+    logger.info(
+        "Regenerating %d CV(s) [%s] from saved job descriptions with model=%s effort=%s (review=%s).",
+        len(targets),
+        ", ".join(str(n) for n, _ in targets),
+        settings.claude_model,
+        settings.claude_effort,
+        settings.cv_review,
+    )
+    if dry_run:
+        for n, r in targets:
+            logger.info("  [DRY] CV %d -> sheet row %d", n, r.number)
+        return 0
+
+    count = 0
+    for n, row in targets:
+        logger.info("Regenerating CV %d (row %d) ...", n, row.number)
+        try:
+            match_rate = _regenerate_one(n, row)
+        except Exception:  # noqa: BLE001
+            logger.exception("Regeneration failed for CV %d (row %d); skipping.", n, row.number)
+            continue
+        if match_rate is not None:
+            try:
+                sheets.write_match_rate(row.number, match_rate)
+            except Exception:  # noqa: BLE001
+                logger.exception("Match-rate write failed for CV %d (files were saved).", n)
+        count += 1
+        logger.info("Regenerated CV %d (final match rate: %s).", n, match_rate)
+    return count
+
+
 def run_scan(
     dry_run: bool = False,
     limit: int | None = None,
