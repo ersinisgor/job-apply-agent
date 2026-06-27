@@ -23,10 +23,14 @@ logger = logging.getLogger(__name__)
 _CV_MARKER_RE = re.compile(r"<CV_START>\s*(.*?)\s*<CV_END>", re.DOTALL)
 _MATCH_RATE_RE = re.compile(r"<MATCH_RATE>\s*(\d+(?:\.\d+)?)\s*</MATCH_RATE>")
 
-MAX_TOKENS = 8000
-# When adaptive thinking is on, the reply also contains thinking tokens (counted
-# against max_tokens), so give generous headroom — streaming makes this safe.
-MAX_TOKENS_THINKING = 32000
+# Output cap. Only a ceiling (you're billed for tokens actually generated), so keep it
+# generous to avoid truncating the CV mid-output. The full analysis + CV alone can run
+# ~7-8k tokens, so 8k was too tight.
+MAX_TOKENS = 16000
+# When adaptive thinking is on, the reply ALSO contains thinking tokens (counted against
+# max_tokens), which can be large. Use sonnet 4.6's streamable ceiling so medium/high
+# effort never truncates before emitting the CV. Streaming makes a high cap safe.
+MAX_TOKENS_THINKING = 64000
 
 # Reasoning effort levels accepted by output_config.effort on Sonnet 4.6 / Opus 4.x.
 # "none" => no extended thinking (a plain, fast request).
