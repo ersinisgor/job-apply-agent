@@ -108,6 +108,16 @@ def _call_model(prompt: str) -> str:
     # Stream so large (high-effort) requests aren't blocked by the 10-min non-stream limit.
     with client.messages.stream(**kwargs) as stream:
         message = stream.get_final_message()
+    u = getattr(message, "usage", None)
+    if u is not None:
+        # Output tokens include extended-thinking tokens, which dominate cost at higher effort.
+        logger.info(
+            "Token usage: input=%s output=%s (model=%s effort=%s)",
+            getattr(u, "input_tokens", "?"),
+            getattr(u, "output_tokens", "?"),
+            settings.claude_model,
+            settings.claude_effort,
+        )
     # Only collect answer text; skip "thinking" blocks.
     return "".join(
         block.text for block in message.content if getattr(block, "type", "") == "text"

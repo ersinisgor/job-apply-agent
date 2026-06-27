@@ -86,8 +86,9 @@ class Settings:
             claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
             # Reasoning effort: none / low / medium / high (extended thinking budget).
             claude_effort=os.getenv("CLAUDE_EFFORT", "none").strip().lower(),
-            # Second expert QA pass on each CV (on by default).
-            cv_review=_env_bool("CV_REVIEW", True),
+            # Second expert QA pass on each CV (OFF by default: the verify/fix
+            # checklist is folded into the single generation prompt, STEP 12).
+            cv_review=_env_bool("CV_REVIEW", False),
             spreadsheet_id=os.getenv("SPREADSHEET_ID", ""),
             sheet_name=os.getenv("SHEET_NAME", "Sayfa1"),
             poll_interval=int(os.getenv("POLL_INTERVAL", "60")),

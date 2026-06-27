@@ -431,6 +431,35 @@ necessary to insert a required ATS keyword**. If a section already covers the jo
 
 ---
 
+# ⚠️ STEP 12 — FINAL SELF-VERIFICATION BEFORE OUTPUT (CRITICAL)
+
+This is the ONLY pass — there is no separate review step afterward, so the CV between the
+`<CV_START>` / `<CV_END>` markers MUST be flawless and ready to submit to a real ATS. Before you write
+that final block, switch hats and act as a **second Senior Technical Recruiter / ATS specialist doing a
+QA review of your own draft**. Re-check it against the job description, silently FIX every problem you
+find, and only then output the corrected version. Verify and fix:
+
+1. **Keyword coverage (most important):** EVERY important HARD skill and ALL SOFT skills from the job
+   description appear naturally somewhere in the CV (Summary, project bullets, Intern, or Previous
+   Experience). Insert any missing one by weaving a single word into an existing sentence — never by
+   adding fake experience or a new sentence.
+2. **Accuracy & credibility:** every statement is truthful to the CURRENT CV + Projects List — no
+   invented technology, employer, date, or metric; the junior–mid level is preserved (no senior/
+   leadership/architecture-at-scale claims).
+3. **Structure fidelity:** section headings, `#` levels, `<br>` / `Tech:` lines, `*` bullets and blank
+   lines exactly mirror the CURRENT CV. No name/contact header, no `---`, no emojis, no extra sections.
+4. **Project titles** are GitHub Markdown links `#### [Title](https://github.com/...)` using the correct
+   URL from the Projects List for each project shown (including any project you swapped in at STEP 8).
+5. **Bold = correct diff** vs the CURRENT CV: only changed/inserted words are bold; everything unchanged
+   from the original stays non-bold.
+6. **One page:** each bullet fits ~one line (use the two reference lines above as the width limit); at
+   most ~3 bullets may wrap; each Selected Projects entry keeps 3–4 bullets + a `Tech:` line; the Summary
+   closing sentence obeys the rule above.
+
+Make `<MATCH_RATE>` reflect this final, self-verified version.
+
+---
+
 # ⚠️ OUTPUT FORMAT REQUIREMENT (CRITICAL — MUST FOLLOW)
 
 After presenting all deliverables above (Master Skill Table, scores, explanations in Turkish),
