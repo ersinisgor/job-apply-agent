@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from . import docx_builder, drive_docs, generator, huntr
 from .config import (
@@ -38,6 +39,30 @@ def save_last_cv_no(value: int) -> None:
 
 def _norm_url(url: str) -> str:
     return url.split("?", 1)[0].strip()
+
+
+# LinkedIn job id inside the link, e.g. .../jobs/view/4427414076/... -> 4427414076.
+# This is exactly what column M (İlan Numarası) extracts from K via its formula.
+_LINKEDIN_ID_RE = re.compile(r"/jobs/view/(\d+)")
+
+
+def _job_key(link: str) -> str:
+    """Stable per-posting identity for de-duplication.
+
+    For LinkedIn links it is the job id (the value column M computes from K) — the
+    most reliable signal, since the same posting can have many tracking URLs. For
+    non-LinkedIn links it falls back to the query-stripped URL. Empty link -> "".
+
+    We derive the id from K rather than reading column M directly: M is a spreadsheet
+    formula, so openpyxl returns the formula text (and Google's cached value can be
+    missing for a freshly appended row) — computing it from K is equivalent and robust.
+    """
+    if not link:
+        return ""
+    m = _LINKEDIN_ID_RE.search(link)
+    if m:
+        return f"li:{m.group(1)}"
+    return f"url:{_norm_url(link)}"
 
 
 def load_huntr_cursor() -> str | None:
@@ -78,14 +103,15 @@ def sync_huntr_to_sheet() -> int:
         return 0
 
     sheets = SheetsClient()
-    existing_urls = {_norm_url(r.link) for r in sheets.get_rows() if r.link}
+    existing_keys = {_job_key(r.link) for r in sheets.get_rows() if r.link}
 
     # Only the URL is taken from Huntr; the rest of the columns are filled later from
-    # the scraped job page (write_processed_row).
+    # the scraped job page (write_processed_row). De-dup by job id (column M), so the
+    # same posting with a different tracking URL is not appended twice.
     new_jobs = [
         {"url": j["url"]}
         for j in jobs
-        if j.get("created_at", "") > cursor and _norm_url(j["url"]) not in existing_urls
+        if j.get("created_at", "") > cursor and _job_key(j["url"]) not in existing_keys
     ]
 
     # Advance the cursor past everything currently on the board so we don't re-check it.
@@ -118,7 +144,30 @@ def is_candidate(row: Row) -> bool:
 
 
 def find_candidates(rows: list[Row]) -> list[Row]:
-    return [r for r in rows if is_candidate(r)]
+    """Candidate rows, with duplicate postings removed.
+
+    A row is skipped (no CV) when another row already covers the same posting (same
+    İlan Numarası / job id, column M derived from K):
+      - another row already has a CV No (column N) for that posting, OR
+      - an earlier candidate row in this same scan already claimed it.
+    So each distinct posting yields exactly one CV, even if the link is added twice.
+    """
+    done_keys = {_job_key(r.link) for r in rows if r.cv_no and r.link}
+    candidates: list[Row] = []
+    seen: set[str] = set()
+    for r in rows:
+        if not is_candidate(r):
+            continue
+        key = _job_key(r.link)
+        if key and (key in done_keys or key in seen):
+            logger.info(
+                "Row %d skipped: same job already in the sheet (job id %s).",
+                r.number, key,
+            )
+            continue
+        seen.add(key)
+        candidates.append(r)
+    return candidates
 
 
 def _save_outputs(cv_no: int, cv_md: str, full_response: str, job_description: str) -> None:
