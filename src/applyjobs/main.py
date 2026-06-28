@@ -6,19 +6,13 @@ import time
 
 from .config import settings
 from .pipeline import run_scan, sync_huntr_to_sheet
-
-
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
+from .reporting import LOG_FILE, FAILURES_FILE, setup_logging
 
 
 def main() -> None:
-    _setup_logging()
+    setup_logging()
     log = logging.getLogger("applyjobs")
+    log.info("Logs: %s | failures: %s", LOG_FILE, FAILURES_FILE)
 
     settings.validate()
     settings.ensure_dirs()

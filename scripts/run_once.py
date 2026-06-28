@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.applyjobs.config import settings  # noqa: E402
 from src.applyjobs.pipeline import run_scan, sync_huntr_to_sheet  # noqa: E402
+from src.applyjobs.reporting import setup_logging  # noqa: E402
 
 
 def main() -> None:
@@ -29,11 +30,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    setup_logging()
 
     settings.validate()
     settings.ensure_dirs()

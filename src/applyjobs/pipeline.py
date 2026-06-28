@@ -5,6 +5,7 @@ import logging
 import re
 
 from . import docx_builder, drive_docs, generator, huntr
+from .reporting import record_failure
 from .config import (
     HUNTR_CURSOR_FILE,
     SKIP_BASVURU_VALUES,
@@ -192,8 +193,11 @@ def _export_google_doc(cv_no: int, cv_md: str) -> None:
         # Local copy for inspection.
         (settings.output_dir / f"cv_{cv_no}.docx").write_bytes(docx_bytes)
         drive_docs.upload_as_google_doc(docx_bytes, f"cv_{cv_no}")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Google Doc export failed for cv_%d (Markdown CV still saved).", cv_no)
+        # The Markdown CV + sheet row still succeed, so this would otherwise be silent —
+        # record it so a missing Google Doc is noticed.
+        record_failure("drive_export", cv_no=cv_no, error=repr(exc))
 
 
 def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | None, dict]:
@@ -333,8 +337,9 @@ def regenerate_cv_range(start: int, end: int, dry_run: bool = False) -> int:
         logger.info("Regenerating CV %d (row %d) ...", n, row.number)
         try:
             match_rate = _regenerate_one(n, row)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception("Regeneration failed for CV %d (row %d); skipping.", n, row.number)
+            record_failure("regenerate", row=row.number, cv_no=n, link=row.link, error=repr(exc))
             continue
         if match_rate is not None:
             try:
@@ -397,11 +402,12 @@ def run_scan(
             #    the app writes, and means we touch the sheet only once (less clobbering).
             try:
                 match_rate, fields = _generate_and_save(row, cv_no, scraper)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Generation failed for row %d; number not consumed, will retry next scan.",
                     row.number,
                 )
+                record_failure("generate", row=row.number, link=row.link, error=repr(exc))
                 continue
 
             # 2) Single sheet write at the end: page-derived fields (only-empty) +
@@ -410,11 +416,12 @@ def run_scan(
                 sheets.write_processed_row(row.number, fields, cv_no, match_rate)
                 save_last_cv_no(cv_no)
                 next_no += 1
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Sheet write failed for row %d (CV files were saved; will retry next scan).",
                     row.number,
                 )
+                record_failure("sheet_write", row=row.number, cv_no=cv_no, link=row.link, error=repr(exc))
                 continue
 
             count += 1
