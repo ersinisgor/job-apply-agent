@@ -39,6 +39,11 @@ def save_last_cv_no(value: int) -> None:
 # Huntr import
 # --------------------------------------------------------------------------- #
 
+# Consecutive scans where the board returned no jobs. After a couple in a row we alert
+# once (likely an expired Huntr session), but a single transient empty read is ignored.
+_huntr_empty_streak = 0
+
+
 def _norm_url(url: str) -> str:
     return url.split("?", 1)[0].strip()
 
@@ -96,10 +101,19 @@ def sync_huntr_to_sheet() -> int:
     if not settings.huntr_board_url:
         return 0
 
+    global _huntr_empty_streak
     jobs = huntr.HuntrClient(headless=True).fetch_jobs()
     if not jobs:
+        _huntr_empty_streak += 1
         logger.info("Huntr: no jobs found on the board.")
+        if _huntr_empty_streak == 2:  # alert once; ignore a single transient empty read
+            record_failure(
+                "huntr_board",
+                error="Board okunamadı — Huntr oturumu kapanmış olabilir. "
+                "Çalıştır: ./.venv/bin/python scripts/huntr_login.py",
+            )
         return 0
+    _huntr_empty_streak = 0
 
     board_keys = {_job_key(j["url"]) for j in jobs if j.get("url")}
     seen = load_huntr_seen()
