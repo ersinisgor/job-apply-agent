@@ -20,7 +20,6 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-_CV_MARKER_RE = re.compile(r"<CV_START>\s*(.*?)\s*<CV_END>", re.DOTALL)
 _MATCH_RATE_RE = re.compile(r"<MATCH_RATE>\s*(\d+(?:\.\d+)?)\s*</MATCH_RATE>")
 
 # Output cap. Only a ceiling (you're billed for tokens actually generated), so keep it
@@ -73,18 +72,37 @@ def _build_prompt(job_description: str, work_mode: str, city: str) -> str:
     )
 
 
+def _strip_fence(cv: str) -> str:
+    """Strip an accidental wrapping ``` code fence the model may have added."""
+    cv = cv.strip()
+    if cv.startswith("```"):
+        cv = re.sub(r"^```[a-zA-Z]*\n", "", cv)
+        cv = re.sub(r"\n```$", "", cv).strip()
+    return cv
+
+
 def _extract_cv(full_response: str) -> str:
-    match = _CV_MARKER_RE.search(full_response)
-    if match:
-        cv = match.group(1).strip()
-        # Strip an accidental wrapping code fence if the model added one.
-        if cv.startswith("```"):
-            cv = re.sub(r"^```[a-zA-Z]*\n", "", cv)
-            cv = re.sub(r"\n```$", "", cv).strip()
-        return cv
-    raise ValueError(
-        "Could not find <CV_START>...<CV_END> markers in the model response."
-    )
+    """Extract the optimized CV from between <CV_START>..<CV_END>.
+
+    The model occasionally emits a STRAY <CV_START> earlier (e.g. inside its analysis),
+    leaving several start markers. Taking the first one then captures analysis junk. So
+    we take the LAST block that actually begins with a section header ('### ' — i.e. the
+    real CV), falling back to the last block if none match.
+    """
+    starts = [m.end() for m in re.finditer("<CV_START>", full_response)]
+    if not starts:
+        raise ValueError(
+            "Could not find <CV_START>...<CV_END> markers in the model response."
+        )
+    blocks = []
+    for s in starts:
+        e = full_response.find("<CV_END>", s)
+        blocks.append(full_response[s : e if e != -1 else len(full_response)])
+    for body in reversed(blocks):
+        cv = _strip_fence(body)
+        if cv.startswith("### "):
+            return cv
+    return _strip_fence(blocks[-1])
 
 
 def _extract_match_rate(full_response: str) -> float | None:
