@@ -31,25 +31,75 @@ class JobPage:
     easy_apply: str = ""  # "Yok" for non-LinkedIn; "" for LinkedIn (not detectable)
 
 
-# Canonical spelling for common cities (handles English "Istanbul" -> Turkish "İstanbul").
-_CITY_MAP = {"istanbul": "İstanbul", "izmir": "İzmir", "icel": "Mersin", "mersin": "Mersin"}
+# Canonical spelling for common cities (keys are Turkish-folded + lowercased, so both
+# "Eskisehir" and "Eskişehir" resolve here).
+_CITY_MAP = {
+    "istanbul": "İstanbul",
+    "izmir": "İzmir",
+    "ankara": "Ankara",
+    "eskisehir": "Eskişehir",
+    "bursa": "Bursa",
+    "icel": "Mersin",
+    "mersin": "Mersin",
+}
+
+# Fold Turkish-specific letters so spelling variants map to the same key (length-preserving).
+_TR_FOLD = str.maketrans(
+    {
+        "İ": "i", "I": "i", "ı": "i",
+        "Ş": "s", "ş": "s", "Ç": "c", "ç": "c", "Ğ": "g", "ğ": "g",
+        "Ö": "o", "ö": "o", "Ü": "u", "ü": "u",
+    }
+)
 
 
 def _city_key(s: str) -> str:
-    return s.replace("İ", "i").replace("I", "i").replace("ı", "i").lower().strip()
+    return s.translate(_TR_FOLD).lower().strip()
+
+
+# LinkedIn metro-area labels: 'Greater İzmir', 'İzmir Metropolitan Area', 'İzmir ve
+# Çevresi' all mean the city itself — strip the modifier down to the bare city.
+_AREA_PREFIXES = ("greater ",)
+_AREA_SUFFIXES = (
+    " metropolitan area",
+    " metropolitan bolgesi",
+    " ve cevresi",
+    " bolgesi",
+    " cevresi",
+    " area",
+)
+
+
+def _strip_area(s: str) -> str:
+    """'Greater İzmir' -> 'İzmir'; 'İzmir Metropolitan Area' -> 'İzmir'."""
+    out = (s or "").strip()
+    low = _city_key(out)  # length-preserving, so slicing by len() stays aligned
+    for p in _AREA_PREFIXES:
+        if low.startswith(p):
+            out = out[len(p):].strip()
+            low = _city_key(out)
+            break
+    for suf in _AREA_SUFFIXES:
+        if low.endswith(suf):
+            out = out[: len(out) - len(suf)].strip()
+            break
+    return out
 
 
 def _clean_city(text: str) -> str:
-    """LinkedIn location like 'Istanbul, Istanbul, Türkiye' -> 'İstanbul'.
+    """LinkedIn location like 'Istanbul, Istanbul, Türkiye' -> 'İstanbul', and metro
+    labels like 'Greater İzmir' -> 'İzmir'.
 
-    Drops duplicated segments, keeps the first (city), and canonicalizes spelling.
+    Strips metro-area modifiers, drops duplicated segments, keeps the first (city), and
+    canonicalizes spelling.
     """
     text = (text or "").strip()
     if not text:
         return ""
     seen: set[str] = set()
     uniq: list[str] = []
-    for p in (part.strip() for part in text.split(",")):
+    for part in text.split(","):
+        p = _strip_area(part.strip())
         k = _city_key(p)
         if k and k not in seen:
             seen.add(k)
