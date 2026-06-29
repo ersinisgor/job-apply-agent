@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure console + rotating-file logging. Safe to call once per program start."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    # Always create failures.log (empty) so its location is easy to find; an empty
+    # file simply means "no failures yet".
+    FAILURES_FILE.touch(exist_ok=True)
     root = logging.getLogger()
     root.setLevel(level)
     if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
