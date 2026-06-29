@@ -103,19 +103,11 @@ def sync_huntr_to_sheet() -> int:
 
     board_keys = {_job_key(j["url"]) for j in jobs if j.get("url")}
     seen = load_huntr_seen()
+    first_run = seen is None
 
-    if seen is None:  # first run / migration from the old cursor: baseline only
-        save_huntr_seen(board_keys)
-        logger.info(
-            "Huntr first run: %d board job(s) baselined as seen; imported 0 (no backlog dump).",
-            len(board_keys),
-        )
-        return 0
-
-    new_keys = board_keys - seen  # jobs that appeared on the board since the last scan
-    if not new_keys:
+    # Fast path: established run with nothing new on the board -> no need to read the sheet.
+    if not first_run and not (board_keys - seen):
         logger.info("Huntr: no new jobs to import.")
-        save_huntr_seen(seen | board_keys)
         return 0
 
     sheets = SheetsClient()
@@ -124,6 +116,14 @@ def sync_huntr_to_sheet() -> int:
         if r.link:
             existing_by_key.setdefault(_job_key(r.link), r.number)
 
+    if first_run:
+        # First run / migration: baseline ONLY the board jobs already tracked in the sheet,
+        # so we don't spam duplicate alerts for the backlog. Board jobs NOT in the sheet stay
+        # unseen and are imported below — genuinely pending jobs are never swallowed.
+        seen = board_keys & existing_by_key.keys()
+        logger.info("Huntr first run: baselined %d board job(s) already in the sheet.", len(seen))
+
+    new_keys = board_keys - seen  # jobs we haven't handled yet
     to_import: list[dict] = []
     for j in jobs:
         key = _job_key(j["url"])
@@ -135,8 +135,8 @@ def sync_huntr_to_sheet() -> int:
         else:
             to_import.append({"url": j["url"]})
 
-    # Mark everything currently on the board as seen so each job is handled once.
-    save_huntr_seen(seen | board_keys)
+    # Mark everything currently on the board as handled so each job is processed once.
+    save_huntr_seen(set(seen) | board_keys)
 
     if not to_import:
         logger.info("Huntr: no new jobs to import (newly-seen ones were duplicates).")
