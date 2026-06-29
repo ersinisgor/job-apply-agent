@@ -1,13 +1,14 @@
 """Orchestration: detect new rows, generate CVs, save files, write back CV No."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 
 from . import docx_builder, drive_docs, generator, huntr
-from .reporting import record_failure
+from .reporting import record_duplicate, record_failure
 from .config import (
-    HUNTR_CURSOR_FILE,
+    HUNTR_SEEN_FILE,
     SKIP_BASVURU_VALUES,
     STATE_DIR,
     settings,
@@ -66,25 +67,31 @@ def _job_key(link: str) -> str:
     return f"url:{_norm_url(link)}"
 
 
-def load_huntr_cursor() -> str | None:
-    """Highest Huntr job createdAt already accounted for (None on first ever run)."""
-    if HUNTR_CURSOR_FILE.exists():
-        return HUNTR_CURSOR_FILE.read_text(encoding="utf-8").strip()
-    return None
+def load_huntr_seen() -> set[str] | None:
+    """Board job keys already processed. None means 'first run' (no baseline yet)."""
+    if not HUNTR_SEEN_FILE.exists():
+        return None
+    try:
+        return set(json.loads(HUNTR_SEEN_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
 
 
-def save_huntr_cursor(created_at: str) -> None:
-    HUNTR_CURSOR_FILE.parent.mkdir(parents=True, exist_ok=True)
-    HUNTR_CURSOR_FILE.write_text(created_at or "", encoding="utf-8")
+def save_huntr_seen(keys: set[str]) -> None:
+    HUNTR_SEEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HUNTR_SEEN_FILE.write_text(json.dumps(sorted(keys)), encoding="utf-8")
 
 
 def sync_huntr_to_sheet() -> int:
     """Import newly-saved Huntr board jobs into the sheet. Returns rows appended.
 
-    A job counts as new when its createdAt is later than the stored cursor AND its URL
-    is not already in the sheet. First ever run sets the cursor to the newest existing
-    job and imports nothing (no backlog dump). Deleting then re-saving a job in Huntr
-    gives it a fresh createdAt, so it can be re-imported (if no longer in the sheet).
+    Identity is the job id (column M / _job_key), not createdAt. We keep a persisted set
+    of board job keys we've already handled ('seen'). Each scan, a key that newly appears
+    on the board is either:
+      - imported (not in the sheet yet), or
+      - flagged as a DUPLICATE (already in the sheet — no CV produced; the user is alerted
+        via record_duplicate), then marked seen so it's only reported once.
+    First run baselines the current board (imports nothing, no backlog dump).
     """
     if not settings.huntr_board_url:
         return 0
@@ -94,36 +101,48 @@ def sync_huntr_to_sheet() -> int:
         logger.info("Huntr: no jobs found on the board.")
         return 0
 
-    created_values = [j.get("created_at", "") for j in jobs if j.get("created_at")]
-    max_created = max(created_values) if created_values else ""
-    cursor = load_huntr_cursor()
+    board_keys = {_job_key(j["url"]) for j in jobs if j.get("url")}
+    seen = load_huntr_seen()
 
-    if cursor is None:  # first ever run
-        save_huntr_cursor(max_created)
-        logger.info("Huntr first run: cursor set to %s; imported 0 (existing backlog skipped).", max_created)
+    if seen is None:  # first run / migration from the old cursor: baseline only
+        save_huntr_seen(board_keys)
+        logger.info(
+            "Huntr first run: %d board job(s) baselined as seen; imported 0 (no backlog dump).",
+            len(board_keys),
+        )
+        return 0
+
+    new_keys = board_keys - seen  # jobs that appeared on the board since the last scan
+    if not new_keys:
+        logger.info("Huntr: no new jobs to import.")
+        save_huntr_seen(seen | board_keys)
         return 0
 
     sheets = SheetsClient()
-    existing_keys = {_job_key(r.link) for r in sheets.get_rows() if r.link}
+    existing_by_key: dict[str, int] = {}
+    for r in sheets.get_rows():
+        if r.link:
+            existing_by_key.setdefault(_job_key(r.link), r.number)
 
-    # Only the URL is taken from Huntr; the rest of the columns are filled later from
-    # the scraped job page (write_processed_row). De-dup by job id (column M), so the
-    # same posting with a different tracking URL is not appended twice.
-    new_jobs = [
-        {"url": j["url"]}
-        for j in jobs
-        if j.get("created_at", "") > cursor and _job_key(j["url"]) not in existing_keys
-    ]
+    to_import: list[dict] = []
+    for j in jobs:
+        key = _job_key(j["url"])
+        if key not in new_keys:
+            continue
+        if key in existing_by_key:
+            # Newly added to Huntr but already tracked in the sheet -> alert, don't import.
+            record_duplicate(j["url"], key, existing_by_key[key])
+        else:
+            to_import.append({"url": j["url"]})
 
-    # Advance the cursor past everything currently on the board so we don't re-check it.
-    if max_created and max_created > cursor:
-        save_huntr_cursor(max_created)
+    # Mark everything currently on the board as seen so each job is handled once.
+    save_huntr_seen(seen | board_keys)
 
-    if not new_jobs:
-        logger.info("Huntr: no new jobs to import.")
+    if not to_import:
+        logger.info("Huntr: no new jobs to import (newly-seen ones were duplicates).")
         return 0
 
-    written = sheets.append_job_rows(new_jobs)
+    written = sheets.append_job_rows(to_import)
     logger.info("Huntr: imported %d new job(s) into rows %s.", len(written), written)
     return len(written)
 

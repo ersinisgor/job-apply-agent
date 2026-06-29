@@ -41,7 +41,10 @@ OAUTH_TOKEN_FILE = CREDENTIALS_DIR / "oauth_token.json"
 
 # State
 PROCESSED_STATE_FILE = STATE_DIR / "processed.json"
-# Highest Huntr job createdAt we've already accounted for (ISO-8601 string).
+# Huntr board job keys we've already processed (baseline + handled). Replaces the old
+# createdAt cursor, which was unreliable (createdAt isn't always the save time).
+HUNTR_SEEN_FILE = STATE_DIR / "huntr_seen.json"
+# Legacy: highest Huntr job createdAt (no longer used; kept so old files are harmless).
 HUNTR_CURSOR_FILE = STATE_DIR / "huntr_cursor.txt"
 
 # Values in the "Başvuru" (B) column that should NOT trigger CV generation.

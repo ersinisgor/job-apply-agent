@@ -86,3 +86,28 @@ def record_failure(
         logger.exception("Could not write to %s", FAILURES_FILE)
     logger.error("FAILURE [%s] row=%s cv_no=%s: %s", stage, row, cv_no, one_line_error)
     _notify("ApplyJobsAgent — hata", f"{stage}: row={row} cv_no={cv_no}")
+
+
+def record_duplicate(link: str, job_key: str, sheet_row: int | None = None) -> None:
+    """A job newly added to Huntr is already in the sheet, so no CV is produced for it.
+
+    Surfaced like a failure (desktop notification + a line in failures.log) so the user
+    notices it instead of assuming a CV was made.
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    job_id = job_key.split(":", 1)[-1]  # "li:4364788282" -> "4364788282"
+    where = f"satır {sheet_row}" if sheet_row else "mevcut bir satır"
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{ts} | DUPLICATE    | İlan no {job_id} zaten sheet'te ({where}) | {link} | CV ÜRETİLMEDİ\n"
+    try:
+        with FAILURES_FILE.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        logger.exception("Could not write to %s", FAILURES_FILE)
+    logger.warning(
+        "DUPLICATE: job %s already in the sheet (%s) — no CV generated.", job_id, where
+    )
+    _notify(
+        "ApplyJobsAgent — tekrar ilan",
+        f"İlan no {job_id} zaten sheet'te ({where}); CV üretilmedi.",
+    )
