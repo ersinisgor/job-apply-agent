@@ -31,8 +31,21 @@ def main() -> None:
     seen = load_huntr_seen()
     print(f"\nSEEN baseline: {'<none — next run will baseline>' if seen is None else f'{len(seen)} job key(s)'}")
 
-    jobs = HuntrClient(headless=True).fetch_jobs()
+    # The board JSON sometimes fails to load in one shot (or the running agent is using
+    # the same Chrome profile) -> 0 jobs. Retry a few times before giving up.
+    jobs: list[dict] = []
+    for attempt in range(1, 4):
+        jobs = HuntrClient(headless=True).fetch_jobs()
+        if jobs:
+            break
+        print(f"  (attempt {attempt}: board not loaded, retrying...)")
     print(f"Parsed {len(jobs)} job(s) from the board.")
+    if not jobs:
+        print(
+            "\nBoard could not be read. Make sure the agent is fully STOPPED (Ctrl-C) so it\n"
+            "is not using the same Chrome profile, then run this again."
+        )
+        return
 
     existing_by_key: dict[str, int] = {}
     for r in SheetsClient().get_rows():
