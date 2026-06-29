@@ -77,6 +77,11 @@ def parse_markdown_cv(md: str) -> dict:
             continue
         if not stripped:
             continue
+        if section is None:
+            # Ignore any preamble before the first "### " header. Without this, a stray
+            # line before "### SUMMARY" reaches the section.startswith() check below and
+            # crashes with: 'NoneType' object has no attribute 'startswith'.
+            continue
 
         if section == "SUMMARY":
             summary.append(_strip_md(stripped))
