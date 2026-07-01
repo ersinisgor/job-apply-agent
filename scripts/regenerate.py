@@ -1,7 +1,7 @@
 """Re-generate a range of existing CVs (by CV No) with the current settings.
 
-Keeps the same CV numbers; overwrites cv_<no>.md / .docx / _analysis / _review,
-updates the same-named Google Doc, and refreshes the Match Rate (P) column.
+Keeps the same CV numbers; overwrites cv_<no>.md / _analysis / _review, updates the
+same-named Google Doc, re-downloads its PDF, and refreshes the Match Rate (P) column.
 Other sheet columns are left untouched.
 
 Usage:

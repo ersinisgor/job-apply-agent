@@ -206,7 +206,7 @@ def find_candidates(rows: list[Row]) -> list[Row]:
 
 def _save_outputs(cv_no: int, cv_md: str, full_response: str, job_description: str) -> None:
     settings.ensure_dirs()
-    cv_path = settings.output_dir / f"cv_{cv_no}.md"
+    cv_path = settings.markdown_dir / f"cv_{cv_no}.md"
     analysis_path = settings.analysis_dir / f"cv_{cv_no}_analysis.md"
     jd_path = settings.job_description_dir / f"job_description_{cv_no}.md"
 
@@ -217,19 +217,23 @@ def _save_outputs(cv_no: int, cv_md: str, full_response: str, job_description: s
 
 
 def _export_google_doc(cv_no: int, cv_md: str) -> None:
-    """Build the .docx from the template and upload it to Drive as a Google Doc.
+    """Build the .docx from the template, upload it to Drive as a Google Doc, and
+    download that Doc back as a PDF into the local PDFs folder.
 
-    Best-effort: a failure here must not undo the Markdown CV that already succeeded.
+    The .docx is only an in-memory intermediary (Drive converts it to a Doc); no local
+    .docx is kept. Best-effort: a failure here must not undo the Markdown CV that already
+    succeeded. A single Drive client is reused so credentials load only once.
     """
     try:
         docx_bytes = docx_builder.build_docx(cv_md)
-        # Local copy for inspection.
-        (settings.output_dir / f"cv_{cv_no}.docx").write_bytes(docx_bytes)
-        drive_docs.upload_as_google_doc(docx_bytes, f"cv_{cv_no}")
+        client = drive_docs.DriveDocsClient()
+        file_id = client.upload_as_google_doc(docx_bytes, f"cv_{cv_no}")
+        pdf_bytes = client.export_as_pdf(file_id)
+        (settings.pdf_dir / f"cv_{cv_no}.pdf").write_bytes(pdf_bytes)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Google Doc export failed for cv_%d (Markdown CV still saved).", cv_no)
+        logger.exception("Google Doc/PDF export failed for cv_%d (Markdown CV still saved).", cv_no)
         # The Markdown CV + sheet row still succeed, so this would otherwise be silent —
-        # record it so a missing Google Doc is noticed.
+        # record it so a missing Google Doc/PDF is noticed.
         record_failure("drive_export", cv_no=cv_no, error=repr(exc))
 
 
@@ -291,7 +295,8 @@ def _regenerate_one(cv_no: int, row: Row) -> float | None:
     The original page text was stored as job_description_<no>.md when the CV was first
     made; re-using it is robust against expired/removed LinkedIn postings and avoids a
     long burst of scraping. Work mode (G) and city (F) come from the sheet row.
-    Overwrites cv_<no>.md/.docx/_analysis/_review and updates the same-named Google Doc.
+    Overwrites cv_<no>.md/_analysis/_review, updates the same-named Google Doc, and
+    re-downloads its PDF.
     Returns the final match rate (or None).
     """
     jd_path = settings.job_description_dir / f"job_description_{cv_no}.md"
@@ -331,8 +336,8 @@ def _regenerate_one(cv_no: int, row: Row) -> float | None:
 def regenerate_cv_range(start: int, end: int, dry_run: bool = False) -> int:
     """Re-generate CVs whose CV No (column N) is in [start, end], keeping the same
     numbers. Regenerates from each CV's SAVED job description (no re-scrape), overwrites
-    cv_<no>.md/.docx/_analysis/_review, updates the same-named Google Doc, and refreshes
-    Match Rate (P). Other sheet columns are left untouched.
+    cv_<no>.md/_analysis/_review, updates the same-named Google Doc, re-downloads its PDF,
+    and refreshes Match Rate (P). Other sheet columns are left untouched.
 
     Uses whatever model/effort the current settings define, so run it with the env
     overridden to pick a stronger model, e.g.:

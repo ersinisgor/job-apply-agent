@@ -4,6 +4,9 @@ A service account cannot create files in a personal My Drive (storageQuotaExceed
 so Google Doc creation uses the user's own OAuth credentials. The .docx bytes are
 uploaded with the target mimeType `application/vnd.google-apps.document`, which makes
 Drive convert it to a real Google Doc inside the "Resumes Based on Jobs" folder.
+
+The same client can then export that Doc back as a PDF (`export_as_pdf`) so a local
+PDF copy can be saved.
 """
 from __future__ import annotations
 
@@ -74,6 +77,16 @@ class DriveDocsClient:
         ).execute()
         files = resp.get("files", [])
         return files[0]["id"] if files else None
+
+    def export_as_pdf(self, file_id: str) -> bytes:
+        """Export a Google Doc as PDF bytes (Google's own Doc->PDF conversion).
+
+        Uses files().export, which is fine for the small CV Docs (the export endpoint
+        caps at ~10 MB of exported content).
+        """
+        return self._drive.files().export(
+            fileId=file_id, mimeType="application/pdf"
+        ).execute()
 
     def upload_as_google_doc(self, docx_bytes: bytes, name: str) -> str:
         """Create (or update) a Google Doc named `name` from the .docx. Returns file id."""

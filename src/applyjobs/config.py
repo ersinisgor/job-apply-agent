@@ -105,6 +105,16 @@ class Settings:
             huntr_poll_interval=int(os.getenv("HUNTR_POLL_INTERVAL", "30")),
         )
 
+    @property
+    def markdown_dir(self) -> Path:
+        """Where the Markdown CVs live (subfolder of the CVs output dir)."""
+        return self.output_dir / "Markdown"
+
+    @property
+    def pdf_dir(self) -> Path:
+        """Where the CV PDFs (exported from the Google Docs) are downloaded."""
+        return self.output_dir / "PDFs"
+
     def validate(self) -> None:
         missing = []
         if not self.anthropic_api_key:
@@ -124,6 +134,8 @@ class Settings:
 
     def ensure_dirs(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.markdown_dir.mkdir(parents=True, exist_ok=True)
+        self.pdf_dir.mkdir(parents=True, exist_ok=True)
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
         self.job_description_dir.mkdir(parents=True, exist_ok=True)
         STATE_DIR.mkdir(parents=True, exist_ok=True)
