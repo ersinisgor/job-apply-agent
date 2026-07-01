@@ -46,9 +46,12 @@ _TITLE_LINK_RE = re.compile(r"^\[(?P<disp>.+?)\]\((?P<url>[^)\s]+)\)(?P<rest>.*)
 def _parse_title_link(text: str):
     """A project title '[Display](https://github.com/...)' -> (display_text, url).
 
-    Returns (plain_title, "") when there is no link.
+    Returns (plain_title, "") when there is no link. Bold/italic markers are stripped
+    first, so a bold-wrapped title like '**[Display](url)**' still parses — otherwise
+    the leading '**' breaks the ^\\[ anchor, the URL is lost, and the slot silently
+    keeps the template's original (wrong) hyperlink.
     """
-    m = _TITLE_LINK_RE.match(text.strip())
+    m = _TITLE_LINK_RE.match(_strip_md(text))
     if m:
         display = (m.group("disp") + m.group("rest")).strip()
         return _strip_md(display), m.group("url").strip()
