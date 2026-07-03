@@ -9,6 +9,7 @@ from . import docx_builder, drive_docs, generator, huntr
 from .reporting import record_duplicate, record_failure
 from .config import (
     HUNTR_SEEN_FILE,
+    NO_CV_MARKER,
     SKIP_BASVURU_VALUES,
     STATE_DIR,
     settings,
@@ -137,6 +138,11 @@ def sync_huntr_to_sheet() -> int:
         seen = board_keys & existing_by_key.keys()
         logger.info("Huntr first run: baselined %d board job(s) already in the sheet.", len(seen))
 
+    # In info-only mode we save the job info straight from Huntr (reliable, captured at
+    # save time) and mark N so no CV is produced — instead of re-scraping the job page,
+    # which is often an expired/stale LinkedIn view that yields wrong or missing fields.
+    info_only = not settings.cv_generation
+
     new_keys = board_keys - seen  # jobs we haven't handled yet
     to_import: list[dict] = []
     for j in jobs:
@@ -146,8 +152,16 @@ def sync_huntr_to_sheet() -> int:
         if key in existing_by_key:
             # Newly added to Huntr but already tracked in the sheet -> alert, don't import.
             record_duplicate(j["url"], key, existing_by_key[key])
-        else:
-            to_import.append({"url": j["url"]})
+            continue
+        entry = {"url": j["url"]}
+        if info_only:
+            # Fill only the reliable identity fields (company J, title L) from Huntr's
+            # own record — NOT a re-scrape. City is intentionally left blank: Huntr's
+            # geocoded location is often wrong (e.g. "Krizan Bay"), so F/H/C are left
+            # for the user to fill rather than writing bad data.
+            entry["company"] = j.get("company", "")
+            entry["title"] = j.get("title", "")
+        to_import.append(entry)
 
     # Mark everything currently on the board as handled so each job is processed once.
     save_huntr_seen(set(seen) | board_keys)
@@ -156,8 +170,12 @@ def sync_huntr_to_sheet() -> int:
         logger.info("Huntr: no new jobs to import (newly-seen ones were duplicates).")
         return 0
 
-    written = sheets.append_job_rows(to_import)
-    logger.info("Huntr: imported %d new job(s) into rows %s.", len(written), written)
+    marker = NO_CV_MARKER if info_only else None
+    written = sheets.append_job_rows(to_import, cv_no_marker=marker)
+    logger.info(
+        "Huntr: imported %d new job(s) into rows %s%s.",
+        len(written), written, " (info-only, no CV)" if info_only else "",
+    )
     return len(written)
 
 
@@ -237,6 +255,28 @@ def _export_google_doc(cv_no: int, cv_md: str) -> None:
         record_failure("drive_export", cv_no=cv_no, error=repr(exc))
 
 
+def _scrape_fields(row: Row, scraper: Scraper):
+    """Scrape the job page once and return (JobPage, fields).
+
+    `fields` are the only-empty column values to write to the sheet. Shared by the
+    CV-generation path and the info-only (CV_GENERATION off) path.
+    """
+    jp = scraper.fetch_job(row.link)
+    logger.info(
+        "Fetched page: %r @ %r | %s | %s (%d chars desc)",
+        jp.title, jp.company, jp.city, jp.work_type, len(jp.description),
+    )
+    fields = {
+        "C": jp.easy_apply,
+        "F": jp.city,
+        "H": jp.work_type,
+        "L": jp.title,
+        "J": jp.company,
+        "J_url": jp.company_url,
+    }
+    return jp, fields
+
+
 def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | None, dict]:
     """Scrape the page (description + fields), generate the CV, save outputs.
 
@@ -244,11 +284,7 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
     (only-empty) to the sheet. G (work mode) is intentionally NOT inferred — it is
     filled manually — so the relocation sentence uses the row's existing G if set.
     """
-    jp = scraper.fetch_job(row.link)
-    logger.info(
-        "Fetched page: %r @ %r | %s | %s (%d chars desc)",
-        jp.title, jp.company, jp.city, jp.work_type, len(jp.description),
-    )
+    jp, fields = _scrape_fields(row, scraper)
 
     work_mode = row.work_mode  # manual (often empty -> default relocation sentence)
     city = row.city or jp.city
@@ -278,14 +314,6 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
         (settings.analysis_dir / f"cv_{cv_no}_review.md").write_text(review_full, encoding="utf-8")
     _export_google_doc(cv_no, cv_md)
 
-    fields = {
-        "C": jp.easy_apply,
-        "F": jp.city,
-        "H": jp.work_type,
-        "L": jp.title,
-        "J": jp.company,
-        "J_url": jp.company_url,
-    }
     return match_rate, fields
 
 
@@ -389,6 +417,37 @@ def regenerate_cv_range(start: int, end: int, dry_run: bool = False) -> int:
     return count
 
 
+def _process_info_only(candidates: list[Row], sheets: SheetsClient) -> int:
+    """CV-generation-OFF path: scrape each candidate's page for its info, write the
+    only-empty fields (C/F/H/J/L) to the sheet, and mark N with NO_CV_MARKER so the row
+    is handled once and never assigned a CV (even after the switch is turned back on).
+    No Claude call, no Google Doc, no CV number consumed. Returns rows written.
+    """
+    count = 0
+    with Scraper(headless=True) as scraper:
+        for row in candidates:
+            logger.info("Processing row %d (info-only, no CV) -> %s", row.number, row.link)
+            try:
+                _, fields = _scrape_fields(row, scraper)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Scrape failed for row %d; will retry next scan.", row.number
+                )
+                record_failure("scrape", row=row.number, link=row.link, error=repr(exc))
+                continue
+            try:
+                sheets.write_info_only_row(row.number, fields, NO_CV_MARKER)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Sheet write failed for row %d (info-only); will retry next scan.",
+                    row.number,
+                )
+                record_failure("sheet_write", row=row.number, link=row.link, error=repr(exc))
+                continue
+            count += 1
+    return count
+
+
 def run_scan(
     dry_run: bool = False,
     limit: int | None = None,
@@ -419,13 +478,17 @@ def run_scan(
         logger.info("No candidate rows to process.")
         return 0
 
-    logger.info("Processing %d candidate row(s).", len(candidates))
+    mode = "CV generation" if settings.cv_generation else "info-only (CV generation OFF)"
+    logger.info("Processing %d candidate row(s) [%s].", len(candidates), mode)
     if dry_run:
         for r in candidates:
             logger.info(
                 "  [DRY] row %d | Başvuru=%r | %s", r.number, r.basvuru, r.link
             )
         return 0
+
+    if not settings.cv_generation:
+        return _process_info_only(candidates, sheets)
 
     # Never go below the highest number we've ever assigned (floor guard).
     next_no = max(sheets.next_cv_number(rows), load_last_cv_no() + 1)

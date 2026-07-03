@@ -252,12 +252,18 @@ class SheetsClient:
             cell.hyperlink = url
             cell.font = _link_font(cell)
 
-    def append_job_rows(self, jobs: list[dict]) -> list[int]:
-        """Append rows for new jobs — writes only K (link) + E (date) + A (No) + I + M.
+    def append_job_rows(self, jobs: list[dict], cv_no_marker: str | None = None) -> list[int]:
+        """Append rows for new jobs — writes K (link) + E (date) + A (No) + I + M.
 
-        The remaining columns (C/F/G/H/J/L) are filled later by write_processed_row
-        from the scraped job page. Each job dict needs only {"url": ...}.
-        Single download-edit-upload.
+        Each job dict needs at least {"url": ...}. It MAY also carry Huntr-sourced
+        info ("company"/"title"/"city") which is written to J/L/F right away — used by
+        the info-only (CV_GENERATION off) path so the sheet is filled straight from
+        Huntr instead of re-scraping the (often expired) job page. When cv_no_marker is
+        given it is written to N (CV No) so the row counts as handled with no CV.
+
+        In CV-generation mode the caller passes url-only dicts and no marker, so the
+        remaining columns (C/F/H/J/L) are filled later by write_processed_row from the
+        scraped page — exactly as before. Single download-edit-upload.
         """
         if not jobs:
             return []
@@ -290,6 +296,15 @@ class SheetsClient:
                 f'=IFERROR(MID(K{r},FIND("/jobs/view/",K{r})+11,'
                 f'FIND("/",K{r}&"/",FIND("/jobs/view/",K{r})+11)-FIND("/jobs/view/",K{r})-11),"")'
             )
+            # Optional Huntr-sourced info (info-only path); only set when provided.
+            if job.get("company"):
+                ws.cell(row=r, column=self._col("J")).value = job["company"]
+            if job.get("title"):
+                ws.cell(row=r, column=self._col("L")).value = job["title"]
+            if job.get("city"):
+                ws.cell(row=r, column=self._col("F")).value = job["city"]
+            if cv_no_marker is not None:
+                ws.cell(row=r, column=CV_NO_COL_INDEX).value = cv_no_marker
             written.append(r)
             r += 1
 
@@ -297,13 +312,9 @@ class SheetsClient:
         self._upload(wb)
         return written
 
-    def write_processed_row(
-        self, row_number: int, fields: dict, cv_no: int, match_rate: float | None = None
-    ) -> None:
-        """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink),
-        plus N (CV No) and P (Match Rate). G is never touched (filled manually).
-        Single download-edit-upload."""
-        wb, ws = self._load_workbook()
+    def _fill_page_fields(self, ws, row_number: int, fields: dict) -> None:
+        """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink).
+        G is never touched (filled manually). Does not upload."""
 
         def fill(col: str, val: str):
             if not val:
@@ -323,8 +334,26 @@ class SheetsClient:
             j_cell.hyperlink = fields["J_url"]
             j_cell.font = _link_font(j_cell)
 
+    def write_processed_row(
+        self, row_number: int, fields: dict, cv_no: int, match_rate: float | None = None
+    ) -> None:
+        """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink),
+        plus N (CV No) and P (Match Rate). G is never touched (filled manually).
+        Single download-edit-upload."""
+        wb, ws = self._load_workbook()
+        self._fill_page_fields(ws, row_number, fields)
         ws.cell(row=row_number, column=CV_NO_COL_INDEX).value = cv_no
         if match_rate is not None:
             ws.cell(row=row_number, column=MATCH_RATE_COL_INDEX).value = match_rate
+        _apply_dropdowns(ws)
+        self._upload(wb)
+
+    def write_info_only_row(self, row_number: int, fields: dict, cv_no_marker: str) -> None:
+        """CV-generation-OFF path: fill ONLY-EMPTY C/F/H/J/L from the scraped page and
+        write a non-numeric marker (e.g. "Yok") to N so the row counts as handled but is
+        never assigned a CV. No Match Rate is written. Single download-edit-upload."""
+        wb, ws = self._load_workbook()
+        self._fill_page_fields(ws, row_number, fields)
+        ws.cell(row=row_number, column=CV_NO_COL_INDEX).value = cv_no_marker
         _apply_dropdowns(ws)
         self._upload(wb)

@@ -50,6 +50,12 @@ HUNTR_CURSOR_FILE = STATE_DIR / "huntr_cursor.txt"
 # Values in the "Başvuru" (B) column that should NOT trigger CV generation.
 SKIP_BASVURU_VALUES = {"Geçmiş", "Vazgeçildi", "Başvurulmuş", "✓"}
 
+# Marker written to the CV No column (N) for rows imported while CV generation is OFF.
+# It is non-numeric, so it is ignored by CV numbering yet still counts as "done" — the
+# row keeps its scraped info but is never (re-)assigned a CV. Clear it manually to make
+# the row eligible for a CV again.
+NO_CV_MARKER = "Yok"
+
 
 def _expand(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str)).resolve()
@@ -68,6 +74,7 @@ class Settings:
     claude_model: str
     claude_effort: str
     cv_review: bool
+    cv_generation: bool
     spreadsheet_id: str
     sheet_name: str
     poll_interval: int
@@ -92,6 +99,11 @@ class Settings:
             # Second expert QA pass on each CV (OFF by default: the verify/fix
             # checklist is folded into the single generation prompt, STEP 12).
             cv_review=_env_bool("CV_REVIEW", False),
+            # Master switch for CV generation. ON (default): new jobs get a full CV +
+            # sheet info. OFF: new jobs are still imported and their page info is written
+            # to the sheet, but NO CV is produced (column N gets the marker "Yok" so the
+            # row is not retro-generated when the switch is turned back on).
+            cv_generation=_env_bool("CV_GENERATION", True),
             spreadsheet_id=os.getenv("SPREADSHEET_ID", ""),
             sheet_name=os.getenv("SHEET_NAME", "Sayfa1"),
             poll_interval=int(os.getenv("POLL_INTERVAL", "60")),
