@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 _MATCH_RATE_RE = re.compile(r"<MATCH_RATE>\s*(\d+(?:\.\d+)?)\s*</MATCH_RATE>")
 
+# The job's top two priority programming languages, e.g. "Python, Java" (primary first).
+_LANGUAGES_RE = re.compile(r"<LANGUAGES>\s*(.*?)\s*</LANGUAGES>", re.DOTALL)
+
 # Output cap. Only a ceiling (you're billed for tokens actually generated), so keep it
 # generous to avoid truncating the CV mid-output. The full analysis + CV alone can run
 # ~7-8k tokens, so 8k was too tight.
@@ -31,8 +34,9 @@ MAX_TOKENS = 16000
 # effort never truncates before emitting the CV. Streaming makes a high cap safe.
 MAX_TOKENS_THINKING = 64000
 
-# Reasoning effort levels accepted by output_config.effort on Sonnet 4.6 / Opus 4.x.
-# "none" => no extended thinking (a plain, fast request).
+# Reasoning effort levels accepted by output_config.effort on Sonnet 5 / Sonnet 4.6 /
+# Opus 4.x. "none" => no extended thinking (thinking explicitly disabled; a plain, fast,
+# cheapest request). Sonnet 5 also accepts "xhigh", but it is costly — not enabled here.
 _EFFORT_LEVELS = {"low", "medium", "high", "max"}
 
 
@@ -113,6 +117,21 @@ def _extract_match_rate(full_response: str) -> float | None:
     return float(match.group(1))
 
 
+def extract_languages(full_response: str) -> str:
+    """Return the job's top two priority programming languages, e.g. "Python, Java".
+
+    Parsed from the <LANGUAGES>...</LANGUAGES> marker the model emits (primary language
+    first, second alternative next). Returns "" when the marker is missing or empty (the
+    posting named no language) — the caller then leaves the sheet cell blank.
+    """
+    match = _LANGUAGES_RE.search(full_response)
+    if not match:
+        logger.warning("No <LANGUAGES> marker found in the model response.")
+        return ""
+    # Collapse any stray inner whitespace/newlines to a clean "A, B".
+    return " ".join(match.group(1).split())
+
+
 def _call_model(prompt: str) -> str:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     kwargs = {
@@ -123,10 +142,17 @@ def _call_model(prompt: str) -> str:
     effort = settings.claude_effort
     if effort in _EFFORT_LEVELS:
         # Adaptive thinking + effort is the current API (budget_tokens is rejected on
-        # Sonnet 4.6 / Opus 4.x). Effort controls how much the model thinks.
+        # Sonnet 5 / Sonnet 4.6 / Opus 4.x). Effort controls how much the model thinks;
+        # cost scales with it, so "low" is the cheapest thinking-on setting.
         kwargs["max_tokens"] = MAX_TOKENS_THINKING
         kwargs["thinking"] = {"type": "adaptive"}
         kwargs["output_config"] = {"effort": effort}
+    else:
+        # effort == "none": thinking OFF, and we set it EXPLICITLY. On Sonnet 5 an
+        # omitted `thinking` runs adaptive thinking by DEFAULT (unlike Sonnet 4.6, where
+        # omitting meant thinking-off), which would silently add billed thinking tokens.
+        # Disabling keeps this the cheap, plain single-pass request across both models.
+        kwargs["thinking"] = {"type": "disabled"}
     # Stream so large (high-effort) requests aren't blocked by the 10-min non-stream limit.
     with client.messages.stream(**kwargs) as stream:
         message = stream.get_final_message()

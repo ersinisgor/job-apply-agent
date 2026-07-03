@@ -27,8 +27,8 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-# Column letters we care about (A..P). Index in this list maps to a row value.
-COLUMNS = list(string.ascii_uppercase[:16])  # A..P
+# Column letters we care about (A..Q). Index in this list maps to a row value.
+COLUMNS = list(string.ascii_uppercase[:17])  # A..Q
 
 # Friendly aliases for the columns we use directly.
 COL_BASVURU = "B"
@@ -39,10 +39,15 @@ COL_POZISYON = "L"
 COL_ILAN_NO = "M"
 COL_CV_NO = "N"
 COL_MATCH_RATE = "P"  # post-optimization ATS Match Rate
+COL_LANGUAGES = "Q"   # job's top two priority programming languages ("Python, Java")
 
 # 1-based column indexes for openpyxl.
 CV_NO_COL_INDEX = COLUMNS.index(COL_CV_NO) + 1        # = 14
 MATCH_RATE_COL_INDEX = COLUMNS.index(COL_MATCH_RATE) + 1  # = 16
+LANGUAGES_COL_INDEX = COLUMNS.index(COL_LANGUAGES) + 1    # = 17
+
+# Font size (points) for the languages cell (Q) — the user wants it small (8pt).
+LANGUAGES_FONT_SIZE = 8
 
 # Last data row to apply dropdowns to (the sheet has a fixed 1000-row grid).
 DROPDOWN_LAST_ROW = 1000
@@ -123,6 +128,11 @@ def _cell_to_str(value) -> str:
 def _link_font(cell) -> Font:
     """Hyperlink style (blue, underlined) at 10pt, keeping the cell's font family."""
     return Font(name=cell.font.name, size=10, color="1155CC", underline="single")
+
+
+def _languages_font(cell) -> Font:
+    """Small (8pt) plain font for the languages cell (Q), keeping the cell's font family."""
+    return Font(name=cell.font.name, size=LANGUAGES_FONT_SIZE)
 
 
 class SheetsClient:
@@ -334,17 +344,33 @@ class SheetsClient:
             j_cell.hyperlink = fields["J_url"]
             j_cell.font = _link_font(j_cell)
 
+    def _set_languages_cell(self, cell, languages: str) -> None:
+        """Write the job's priority languages ("Python, Java") to Q at 8pt.
+        Only sets a value when non-empty (an empty posting-language stays blank)."""
+        if not languages:
+            return
+        cell.value = languages
+        cell.font = _languages_font(cell)
+
     def write_processed_row(
-        self, row_number: int, fields: dict, cv_no: int, match_rate: float | None = None
+        self,
+        row_number: int,
+        fields: dict,
+        cv_no: int,
+        match_rate: float | None = None,
+        languages: str = "",
     ) -> None:
         """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink),
-        plus N (CV No) and P (Match Rate). G is never touched (filled manually).
-        Single download-edit-upload."""
+        plus N (CV No), P (Match Rate) and Q (priority programming languages, 8pt).
+        G is never touched (filled manually). Single download-edit-upload."""
         wb, ws = self._load_workbook()
         self._fill_page_fields(ws, row_number, fields)
         ws.cell(row=row_number, column=CV_NO_COL_INDEX).value = cv_no
         if match_rate is not None:
             ws.cell(row=row_number, column=MATCH_RATE_COL_INDEX).value = match_rate
+        self._set_languages_cell(
+            ws.cell(row=row_number, column=LANGUAGES_COL_INDEX), languages
+        )
         _apply_dropdowns(ws)
         self._upload(wb)
 

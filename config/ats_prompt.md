@@ -505,6 +505,26 @@ This value is written to the spreadsheet, so it must be exactly the post-optimiz
 
 ---
 
+# ⚠️ PRIORITY PROGRAMMING LANGUAGES OUTPUT (CRITICAL — MUST FOLLOW)
+
+After the `<MATCH_RATE>` marker, identify the programming languages the JOB DESCRIPTION asks for and
+output the **top two, in priority order**, between the markers below — the primary (most-required /
+must-have) language FIRST, then the second (alternative / nice-to-have) language, separated by a comma
+and a single space, with nothing else between the markers:
+
+<LANGUAGES>Python, Java</LANGUAGES>
+
+Rules:
+- Output ONLY real programming languages (e.g. Python, Java, C#, JavaScript, TypeScript, Go, C++, Rust,
+  Kotlin, Swift, PHP, Ruby, Scala). Do NOT list frameworks, libraries, databases, or tools (e.g. React,
+  .NET, Spring, SQL, Docker) as a language.
+- Judge PRIORITY from the wording: "required"/"must have"/"strong X" outranks "plus"/"nice to have"/
+  "familiarity with". If the posting clearly emphasizes one language, that one goes first.
+- If the posting names only ONE language, output just that one (no comma). If it names NONE, output
+  nothing between the markers: `<LANGUAGES></LANGUAGES>`.
+
+---
+
 # INPUT DATA
 
 ## PROJECTS LIST

@@ -277,12 +277,15 @@ def _scrape_fields(row: Row, scraper: Scraper):
     return jp, fields
 
 
-def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | None, dict]:
+def _generate_and_save(
+    row: Row, cv_no: int, scraper: Scraper
+) -> tuple[float | None, dict, str]:
     """Scrape the page (description + fields), generate the CV, save outputs.
 
-    Returns (match_rate, fields) where fields are the column values to write
-    (only-empty) to the sheet. G (work mode) is intentionally NOT inferred — it is
-    filled manually — so the relocation sentence uses the row's existing G if set.
+    Returns (match_rate, fields, languages) where fields are the column values to write
+    (only-empty) to the sheet and languages is the job's top two priority programming
+    languages ("Python, Java") for column Q. G (work mode) is intentionally NOT inferred —
+    it is filled manually — so the relocation sentence uses the row's existing G if set.
     """
     jp, fields = _scrape_fields(row, scraper)
 
@@ -291,6 +294,7 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
     full_response, cv_md, match_rate = generator.generate(
         jp.description, work_mode=work_mode, city=city
     )
+    languages = generator.extract_languages(full_response)
 
     # Expert QA second pass (toggle via CV_REVIEW): re-check the draft against the job
     # (keyword coverage, accuracy, structure, match rate) and fix problems. Fall back
@@ -314,7 +318,7 @@ def _generate_and_save(row: Row, cv_no: int, scraper: Scraper) -> tuple[float | 
         (settings.analysis_dir / f"cv_{cv_no}_review.md").write_text(review_full, encoding="utf-8")
     _export_google_doc(cv_no, cv_md)
 
-    return match_rate, fields
+    return match_rate, fields, languages
 
 
 def _regenerate_one(cv_no: int, row: Row) -> float | None:
@@ -502,7 +506,7 @@ def run_scan(
             #    own edits to this row (B/C/F/G/H...) ~1.5 min to sync to Drive before
             #    the app writes, and means we touch the sheet only once (less clobbering).
             try:
-                match_rate, fields = _generate_and_save(row, cv_no, scraper)
+                match_rate, fields, languages = _generate_and_save(row, cv_no, scraper)
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Generation failed for row %d; number not consumed, will retry next scan.",
@@ -512,9 +516,11 @@ def run_scan(
                 continue
 
             # 2) Single sheet write at the end: page-derived fields (only-empty) +
-            #    CV No (N) + Match Rate (P) together.
+            #    CV No (N) + Match Rate (P) + priority languages (Q) together.
             try:
-                sheets.write_processed_row(row.number, fields, cv_no, match_rate)
+                sheets.write_processed_row(
+                    row.number, fields, cv_no, match_rate, languages
+                )
                 save_last_cv_no(cv_no)
                 next_no += 1
             except Exception as exc:  # noqa: BLE001
