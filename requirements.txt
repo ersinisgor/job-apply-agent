@@ -7,3 +7,6 @@ python-dotenv>=1.0.1
 beautifulsoup4>=4.12.3
 openpyxl>=3.1.5
 python-docx>=1.1.0
+# LinkedIn Job Summary API (browser extension backend)
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0

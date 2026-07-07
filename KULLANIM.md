@@ -131,3 +131,29 @@ sütunlarını doldurur (sadece boş hücreleri) ve CV üretir.
 - **Yanlış klasördeyim:** her komuttan önce `cd /Users/mac/code/ersinisgor/ApplyJobsAgent`.
 - **Bir ilan atlandı:** ilan yayından kalkmış olabilir; o satır işlenmez, diğerleri devam eder.
   İlgili satırın CV No (N) hücresini silip tekrar çalıştırırsan yeniden denenir.
+
+---
+
+## LinkedIn İlan Özet Extension'ı (Chrome)
+
+LinkedIn'de bir ilana tıkladığında sağ üstte kısa bir **Türkçe özet** gösterir. Özetleme, bu projeye
+entegre FastAPI servisiyle (Haiku modeli) yapılır.
+
+**1. Tek komutla başlat** (özet API + CV poller birlikte; Ctrl+C ikisini birden durdurur):
+```bash
+cd /Users/mac/code/ersinisgor/ApplyJobsAgent
+./scripts/start.sh
+```
+> Sadece özet API'sini istersen: `./.venv/bin/python scripts/run_summary_api.py`
+
+**2. Extension'ı Chrome'a yükle (yalnızca ilk sefer):**
+- `chrome://extensions` → sağ üstten **Developer mode** aç.
+- **Load unpacked** → `ApplyJobsAgent/extension` klasörünü seç.
+
+**3. Kullan:** `https://www.linkedin.com/jobs/` sayfasında bir ilana tıkla → sağ panelde Türkçe özet.
+Başka ilana geçince güncellenir; daha önce baktığın ilana dönünce anında (önbellekten) gelir.
+
+**Sık durumlar:**
+- Panelde **"Backend unreachable…"**: `./scripts/start.sh` (veya `run_summary_api.py`) çalışmıyor.
+- Panelde **"ANTHROPIC_API_KEY is not set"**: `.env`'de anahtar eksik.
+- Özet modeli `.env`'deki `SUMMARY_MODEL` (varsayılan `claude-haiku-4-5`) ile değişir.

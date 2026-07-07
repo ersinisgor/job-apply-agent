@@ -73,6 +73,9 @@ class Settings:
     anthropic_api_key: str
     claude_model: str
     claude_effort: str
+    # Model used by the LinkedIn Job Summary API (separate from claude_model, which
+    # is used for CV generation). Defaults to Haiku for fast, low-cost summaries.
+    summary_model: str
     cv_review: bool
     cv_generation: bool
     spreadsheet_id: str
@@ -96,6 +99,8 @@ class Settings:
             claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6"),
             # Reasoning effort: none / low / medium / high (extended thinking budget).
             claude_effort=os.getenv("CLAUDE_EFFORT", "none").strip().lower(),
+            # Model for the LinkedIn Job Summary API (extension). Haiku by default.
+            summary_model=os.getenv("SUMMARY_MODEL", "claude-haiku-4-5"),
             # Second expert QA pass on each CV (OFF by default: the verify/fix
             # checklist is folded into the single generation prompt, STEP 12).
             cv_review=_env_bool("CV_REVIEW", False),

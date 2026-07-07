@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedIn Job Summary",
+  "version": "0.1.0",
+  "description": "Reads the selected job on the LinkedIn jobs page and shows a short Turkish summary in a side panel.",
+  "icons": {
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/jobs/*"],
+      "js": ["content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["http://localhost:8000/*"]
+}

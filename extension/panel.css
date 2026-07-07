@@ -1,0 +1,121 @@
+/* Fixed, scrollable summary panel at the top-right — a readable card over LinkedIn. */
+
+#jobsum-panel {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  width: 340px;
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #1f2328;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 2147483000; /* stay above LinkedIn */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+#jobsum-panel.jobsum-hidden {
+  display: none;
+}
+
+#jobsum-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #0a66c2; /* LinkedIn blue */
+  color: #ffffff;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+#jobsum-close {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+#jobsum-close:hover {
+  opacity: 0.8;
+}
+
+#jobsum-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.jobsum-status {
+  padding: 8px 0;
+  color: #57606a;
+}
+
+.jobsum-error {
+  color: #b42318;
+}
+
+.jobsum-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.jobsum-row:last-child {
+  border-bottom: none;
+}
+
+.jobsum-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #57606a;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+
+.jobsum-value {
+  color: #1f2328;
+  word-wrap: break-word;
+}
+
+.jobsum-chip {
+  display: inline-block;
+  background: #eef3f8;
+  color: #0a66c2;
+  border-radius: 12px;
+  padding: 2px 9px;
+  margin: 2px 3px 2px 0;
+  font-size: 12px;
+}
+
+/* Dark theme support (LinkedIn dark mode) */
+@media (prefers-color-scheme: dark) {
+  #jobsum-panel {
+    background: #1d2226;
+    color: #e8e6e3;
+    border-color: #38434f;
+  }
+  .jobsum-row {
+    border-bottom-color: #38434f;
+  }
+  .jobsum-label,
+  .jobsum-status {
+    color: #a9b0b8;
+  }
+  .jobsum-value {
+    color: #e8e6e3;
+  }
+  .jobsum-chip {
+    background: #29343d;
+    color: #70b5f9;
+  }
+}

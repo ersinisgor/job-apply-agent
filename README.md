@@ -118,3 +118,22 @@ state/       processed.json, last_cv_no (gitignored)
 ## Notlar
 - Varsayılan model `claude-sonnet-4-6` (`.env`'de `CLAUDE_MODEL` ile değiştirilebilir).
 - CV girdiniz değişirse `config/cv_base.md` ve `config/projects_list.md` dosyalarını güncelleyin.
+
+## LinkedIn İlan Özet Extension'ı
+
+LinkedIn iş arama sayfasında seçili ilanı okuyup sağ panelde kısa bir **Türkçe özet** gösteren Chrome
+extension'ı (MV3). Özetleme, bu projeye entegre bir FastAPI servisi (`src/applyjobs/summary_api.py`)
+üzerinden Claude ile yapılır. Model olarak **Haiku** kullanılır (`.env`'de `SUMMARY_MODEL`; CV üretiminin
+`CLAUDE_MODEL`'inden ayrıdır). Çıkarılan alanlar: Rol Özeti, Çalışma Şekli, Vize/Sponsorluk, Birincil/
+İkincil Dil, Araçlar, Framework'ler, Kütüphaneler, Min. Deneyim.
+
+**Tek komutla başlat (API + CV poller birlikte, Ctrl+C ikisini durdurur):**
+```bash
+./scripts/start.sh
+```
+Yalnız özet API'sini çalıştırmak için: `./.venv/bin/python scripts/run_summary_api.py`
+
+**Extension'ı yükle (bir kez):** `chrome://extensions` → Developer mode → **Load unpacked** →
+`ApplyJobsAgent/extension` klasörünü seç. Ardından `https://www.linkedin.com/jobs/` sayfasında bir ilana
+tıkla; sağ üstte özet paneli belirir. (Not: extension LinkedIn'e hiçbir istek atmaz; sadece sayfadaki
+metni okuyup localhost:8000'e gönderir.)
