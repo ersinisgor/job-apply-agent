@@ -46,8 +46,8 @@ CV_NO_COL_INDEX = COLUMNS.index(COL_CV_NO) + 1        # = 14
 MATCH_RATE_COL_INDEX = COLUMNS.index(COL_MATCH_RATE) + 1  # = 16
 LANGUAGES_COL_INDEX = COLUMNS.index(COL_LANGUAGES) + 1    # = 17
 
-# Font size (points) for the languages cell (Q) — the user wants it small (8pt).
-LANGUAGES_FONT_SIZE = 8
+# Font size (points) for the languages cell (Q) — the user wants it small (7pt).
+LANGUAGES_FONT_SIZE = 7
 
 # Last data row to apply dropdowns to (the sheet has a fixed 1000-row grid).
 DROPDOWN_LAST_ROW = 1000
@@ -131,7 +131,7 @@ def _link_font(cell) -> Font:
 
 
 def _languages_font(cell) -> Font:
-    """Small (8pt) plain font for the languages cell (Q), keeping the cell's font family."""
+    """Small (7pt) plain font for the languages cell (Q), keeping the cell's font family."""
     return Font(name=cell.font.name, size=LANGUAGES_FONT_SIZE)
 
 
@@ -345,7 +345,7 @@ class SheetsClient:
             j_cell.font = _link_font(j_cell)
 
     def _set_languages_cell(self, cell, languages: str) -> None:
-        """Write the job's priority languages ("Python, Java") to Q at 8pt.
+        """Write the job's priority languages ("Python, Java") to Q at 7pt.
         Only sets a value when non-empty (an empty posting-language stays blank)."""
         if not languages:
             return
@@ -361,7 +361,7 @@ class SheetsClient:
         languages: str = "",
     ) -> None:
         """Fill ONLY-EMPTY C/F/H/J/L from the scraped page (J as a company hyperlink),
-        plus N (CV No), P (Match Rate) and Q (priority programming languages, 8pt).
+        plus N (CV No), P (Match Rate) and Q (priority programming languages, 7pt).
         G is never touched (filled manually). Single download-edit-upload."""
         wb, ws = self._load_workbook()
         self._fill_page_fields(ws, row_number, fields)
