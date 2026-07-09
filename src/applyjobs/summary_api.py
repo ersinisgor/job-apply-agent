@@ -58,13 +58,16 @@ SYSTEM_PROMPT = (
     "condition in 'work_type_note' (a few words, e.g. 'İstanbul tercihli').\n"
     "- 'min_experience': a few words (e.g. '3+ yıl'); 'visa_sponsorship': only if the "
     "posting mentions it.\n"
-    "- 'fit_score' (0-100): how well the posting fits the CANDIDATE PROFILE given below "
-    "— compare required languages/frameworks/tools AND seniority. Bands: 70-100 strong "
-    "(stack overlaps well and level fits), 40-69 partial (some overlap or a level gap), "
-    "1-39 weak. The candidate is junior / early mid-level, so senior/lead postings score "
-    "lower even when the stack overlaps. If no candidate profile is given, use 0.\n"
-    "- 'fit_reason': ONE very short Turkish clause explaining the score (e.g. "
-    "'Node/TS güçlü ama .NET ağırlıklı'). Empty when fit_score is 0."
+    "- 'fit_score' (0-100): how well the posting's REQUIRED TECHNOLOGIES fit the "
+    "CANDIDATE PROFILE given below — compare required languages/frameworks/tools ONLY. "
+    "IGNORE experience and seniority ENTIRELY: do NOT lower the score for a senior/lead "
+    "title or a years-of-experience requirement, and do NOT raise it for a junior one — "
+    "the years asked for and the candidate's years must not affect the number at all. "
+    "Bands: 70-100 strong (stack overlaps well), 40-69 partial (some overlap), 1-39 weak "
+    "(little overlap). If no candidate profile is given, use 0.\n"
+    "- 'fit_reason': ONE very short Turkish clause explaining the score from STACK "
+    "overlap only (e.g. 'Node/TS güçlü ama .NET ağırlıklı'); never mention experience "
+    "level. Empty when fit_score is 0."
 )
 
 
@@ -146,6 +149,9 @@ def _extract_json(text: str) -> str:
 # (SUMMARY_CACHE_FILE) so it survives an API restart.
 _SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
 _CACHE_MAX = 1000
+# Bump whenever the scoring rubric (SYSTEM_PROMPT) or JobSummary schema changes, so a
+# stale on-disk cache from the old rules is discarded instead of returning old scores.
+_CACHE_VERSION = 2
 
 
 def _load_cache() -> None:
@@ -154,9 +160,12 @@ def _load_cache() -> None:
         raw = json.loads(SUMMARY_CACHE_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return  # missing or corrupt file: start empty
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or raw.get("version") != _CACHE_VERSION:
+        return  # old format or older rubric: ignore so stale scores don't linger
+    entries = raw.get("entries")
+    if not isinstance(entries, dict):
         return
-    for job_id, data in raw.items():
+    for job_id, data in entries.items():
         try:
             _SUMMARY_CACHE[str(job_id)] = JobSummary.model_validate(data)
         except Exception:  # noqa: BLE001 - skip entries that no longer fit the schema
@@ -168,7 +177,10 @@ def _save_cache() -> None:
     """Write the whole cache to disk atomically (temp file + replace)."""
     try:
         SUMMARY_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {k: v.model_dump(mode="json") for k, v in _SUMMARY_CACHE.items()}
+        payload = {
+            "version": _CACHE_VERSION,
+            "entries": {k: v.model_dump(mode="json") for k, v in _SUMMARY_CACHE.items()},
+        }
         tmp = SUMMARY_CACHE_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(SUMMARY_CACHE_FILE)
