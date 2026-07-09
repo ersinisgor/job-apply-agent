@@ -125,6 +125,53 @@
   font-size: 12px;
 }
 
+/* Fit badge: prominent top block, color-banded by score. */
+.jobsum-fit {
+  padding: 10px 0 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #eaeef2;
+  border-left: 4px solid transparent;
+  padding-left: 10px;
+  margin-left: -14px; /* bleed the color bar to the panel edge */
+}
+
+.jobsum-fit-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.jobsum-fit-score {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.jobsum-fit-reason {
+  font-size: 12px;
+  color: #57606a;
+}
+
+.jobsum-fit--high {
+  border-left-color: #1a7f37;
+}
+.jobsum-fit--high .jobsum-fit-score {
+  color: #1a7f37;
+}
+.jobsum-fit--mid {
+  border-left-color: #bf8700;
+}
+.jobsum-fit--mid .jobsum-fit-score {
+  color: #9a6700;
+}
+.jobsum-fit--low {
+  border-left-color: #b42318;
+}
+.jobsum-fit--low .jobsum-fit-score {
+  color: #b42318;
+}
+
 /* Dark theme support (LinkedIn dark mode) */
 @media (prefers-color-scheme: dark) {
   #jobsum-panel {
@@ -145,5 +192,29 @@
   .jobsum-chip {
     background: #29343d;
     color: #70b5f9;
+  }
+  .jobsum-fit {
+    border-bottom-color: #38434f;
+  }
+  .jobsum-fit-reason {
+    color: #a9b0b8;
+  }
+  .jobsum-fit--high {
+    border-left-color: #3fb950;
+  }
+  .jobsum-fit--high .jobsum-fit-score {
+    color: #3fb950;
+  }
+  .jobsum-fit--mid {
+    border-left-color: #d29922;
+  }
+  .jobsum-fit--mid .jobsum-fit-score {
+    color: #d29922;
+  }
+  .jobsum-fit--low {
+    border-left-color: #f85149;
+  }
+  .jobsum-fit--low .jobsum-fit-score {
+    color: #f85149;
   }
 }

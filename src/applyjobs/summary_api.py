@@ -24,10 +24,19 @@ import anthropic
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import settings
+from .config import CV_BASE_FILE, settings
 from .summary_schema import JobSummary, SummarizeRequest
 
 logger = logging.getLogger("applyjobs.summary")
+
+# The candidate's master profile, loaded once. Injected into the prompt so the model
+# can score how well each posting fits the user (fit_score / fit_reason). Missing file
+# is tolerated: scoring is then disabled (the model is told to emit fit_score = 0).
+try:
+    _CV_TEXT = CV_BASE_FILE.read_text(encoding="utf-8").strip()
+except OSError:
+    _CV_TEXT = ""
+    logger.warning("CV file %s not found; fit scoring disabled.", CV_BASE_FILE)
 
 # The system prompt is in English, but it instructs the model to write the field
 # VALUES in Turkish so the panel reads as a quick Turkish summary.
@@ -47,8 +56,22 @@ SYSTEM_PROMPT = (
     "- 'work_type': distinguish remote/hybrid/on-site; put any city/country/timezone "
     "condition in 'work_type_note' (a few words, e.g. 'İstanbul tercihli').\n"
     "- 'min_experience': a few words (e.g. '3+ yıl'); 'visa_sponsorship': only if the "
-    "posting mentions it."
+    "posting mentions it.\n"
+    "- 'fit_score' (0-100): how well the posting fits the CANDIDATE PROFILE given below "
+    "— compare required languages/frameworks/tools AND seniority. Bands: 70-100 strong "
+    "(stack overlaps well and level fits), 40-69 partial (some overlap or a level gap), "
+    "1-39 weak. The candidate is junior / early mid-level, so senior/lead postings score "
+    "lower even when the stack overlaps. If no candidate profile is given, use 0.\n"
+    "- 'fit_reason': ONE very short Turkish clause explaining the score (e.g. "
+    "'Node/TS güçlü ama .NET ağırlıklı'). Empty when fit_score is 0."
 )
+
+
+def _cv_block() -> str:
+    """The candidate profile appended to the system prompt, or '' when unavailable."""
+    if not _CV_TEXT:
+        return ""
+    return "\n\nCANDIDATE PROFILE (score fit_score against this):\n" + _CV_TEXT
 
 
 class MissingCredentialsError(RuntimeError):
@@ -121,12 +144,23 @@ def summarize(req: SummarizeRequest) -> JobSummary:
             "ANTHROPIC_API_KEY is not set. Add it to the project .env file."
         )
 
+    # The CV + prompt + schema prefix is identical for every posting the user views,
+    # so cache it — only the per-job user message varies. (Below Haiku's 4096-token
+    # cacheable minimum this silently no-ops, which is harmless.)
+    system = [
+        {
+            "type": "text",
+            "text": SYSTEM_PROMPT + _cv_block() + _JSON_INSTRUCTION,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
     last_error: Exception | None = None
     for _ in range(2):  # one retry on malformed JSON
         response = _client().messages.create(
             model=settings.summary_model,
             max_tokens=600,  # the summary is deliberately terse; cap the latency too
-            system=SYSTEM_PROMPT + _JSON_INSTRUCTION,
+            system=system,
             messages=[{"role": "user", "content": _build_user_message(req)}],
         )
         text = "".join(b.text for b in response.content if b.type == "text")

@@ -57,6 +57,12 @@ class JobSummary(BaseModel):
         default_factory=list,
         description="Required technologies, max 6, most important first.",
     )
+    fit_score: int = Field(
+        default=0, description="0-100 fit vs the candidate profile; 0 if unknown."
+    )
+    fit_reason: str = Field(
+        default="", description="One very short Turkish clause: why it fits or not."
+    )
     min_experience: str = Field(
         default="", description="Minimum experience, very short Turkish, e.g. '3+ yıl'."
     )

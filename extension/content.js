@@ -281,7 +281,28 @@
           <div class="jobsum-value">${rendered}</div>
         </div>`;
     }).join("");
-    setBody(rows || `<div class="jobsum-status">No information to summarize.</div>`);
+    setBody(
+      renderFit(data.fit_score, data.fit_reason) +
+        (rows || `<div class="jobsum-status">No information to summarize.</div>`)
+    );
+  }
+
+  // Fit badge at the top: colored %NN + one-line reason. Hidden when no score.
+  function renderFit(score, reason) {
+    const n = Math.round(Number(score) || 0);
+    if (n <= 0) return "";
+    const band = n >= 70 ? "high" : n >= 40 ? "mid" : "low";
+    const reasonHtml = reason
+      ? `<span class="jobsum-fit-reason">${escapeHtml(String(reason))}</span>`
+      : "";
+    return `
+      <div class="jobsum-fit jobsum-fit--${band}">
+        <div class="jobsum-label">Uygunluk</div>
+        <div class="jobsum-fit-body">
+          <span class="jobsum-fit-score">%${n}</span>
+          ${reasonHtml}
+        </div>
+      </div>`;
   }
 
   function renderValue(value) {
