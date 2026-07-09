@@ -245,6 +245,26 @@
   background: #f3f4f6;
 }
 
+/* "Olabilir" shortlist toggle — violet, distinct from the green reviewed action;
+   fills in when the job is on the shortlist. */
+.jobsum-review-btn--maybe {
+  border-color: #8250df;
+  color: #8250df;
+}
+
+.jobsum-review-btn--maybe:hover {
+  background: #f3eefc;
+}
+
+.jobsum-review-btn--maybe.is-active {
+  background: #8250df;
+  color: #ffffff;
+}
+
+.jobsum-review-btn--maybe.is-active:hover {
+  background: #6f42c1;
+}
+
 /* Reviewed job cards in the list: dimmed + a small badge. */
 .jobsum-seen {
   opacity: 0.55;
@@ -274,6 +294,7 @@
 }
 
 #jobsum-list,
+#jobsum-maybe-list,
 #jobsum-refresh {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.5);
@@ -286,6 +307,8 @@
 
 #jobsum-list:hover,
 #jobsum-list.is-active,
+#jobsum-maybe-list:hover,
+#jobsum-maybe-list.is-active,
 #jobsum-refresh:hover {
   background: rgba(255, 255, 255, 0.18);
 }
@@ -421,6 +444,20 @@
   }
   .jobsum-review-btn--undo:hover {
     background: #29343d;
+  }
+  .jobsum-review-btn--maybe {
+    border-color: #a371f7;
+    color: #a371f7;
+  }
+  .jobsum-review-btn--maybe:hover {
+    background: #241d33;
+  }
+  .jobsum-review-btn--maybe.is-active {
+    background: #8957e5;
+    color: #ffffff;
+  }
+  .jobsum-review-btn--maybe.is-active:hover {
+    background: #a371f7;
   }
   .jobsum-seen-badge {
     background: #29343d;

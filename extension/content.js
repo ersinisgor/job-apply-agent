@@ -75,7 +75,8 @@
   let lastHeader = { title: "Job Summary", company: "" }; // panel header state
   let userClosed = false; // don't reopen if the user closed the panel
   let warnedNoSelectorFor = null; // log the missing-description warning once per job
-  let showingList = false; // panel is showing the reviewed-jobs list instead of a summary
+  let showingList = false; // panel is showing a marker list instead of a summary
+  let listKind = "reviewed"; // which list is shown: "reviewed" or "maybe"
 
   // Per-job summary cache: returning to a job shows it instantly.
   const CACHE = new Map(); // jobId -> { summary, description }
@@ -94,75 +95,95 @@
   // canonical posting id (stable across searches) in chrome.storage.local, and
   // warn when a reviewed posting shows up again.
 
-  const STORE_KEY = "jobsum_reviewed";
-  const REVIEWED_LIMIT = 3000; // cap; prune oldest by timestamp on write
-  let reviewedMap = {}; // jobId -> { t, title, company, fit }
+  // A marker store persists a set of job ids (with light metadata) in
+  // chrome.storage.local under one key, pruned to a cap by timestamp. We keep two:
+  // "reviewed" (every posting already looked at) and "maybe" (a shortlist of stack-fit
+  // jobs to revisit and possibly add to Huntr later). They are INDEPENDENT — a job can
+  // be in either, both, or neither.
+  const MARKER_LIMIT = 3000; // cap per store; prune oldest by timestamp on write
 
-  function loadReviewed() {
-    try {
-      chrome.storage.local.get(STORE_KEY, (res) => {
-        if (chrome.runtime.lastError) return;
-        reviewedMap = res && res[STORE_KEY] ? res[STORE_KEY] : {};
-        scheduleUpdate(); // reflect loaded state in the list/panel
-      });
-    } catch (_) {
-      /* storage unavailable; feature just stays inert */
-    }
-  }
+  function makeMarkerStore(storeKey, name) {
+    let map = {}; // jobId -> { t, title, company, fit }
 
-  // Keep in sync if another tab changes the store.
-  try {
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes[STORE_KEY]) {
-        reviewedMap = changes[STORE_KEY].newValue || {};
-        scheduleUpdate();
+    function load() {
+      try {
+        chrome.storage.local.get(storeKey, (res) => {
+          if (chrome.runtime.lastError) return;
+          map = (res && res[storeKey]) || {};
+          scheduleUpdate(); // reflect loaded state in the list/panel
+        });
+      } catch (_) {
+        /* storage unavailable; feature just stays inert */
       }
-    });
-  } catch (_) {
-    /* ignore */
-  }
-
-  function persistReviewed() {
-    // Prune to the newest REVIEWED_LIMIT entries by timestamp.
-    const ids = Object.keys(reviewedMap);
-    if (ids.length > REVIEWED_LIMIT) {
-      ids
-        .sort((a, b) => (reviewedMap[a].t || 0) - (reviewedMap[b].t || 0))
-        .slice(0, ids.length - REVIEWED_LIMIT)
-        .forEach((id) => delete reviewedMap[id]);
     }
+
+    // Keep in sync if another tab changes the store.
     try {
-      chrome.storage.local.set({ [STORE_KEY]: reviewedMap });
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && changes[storeKey]) {
+          map = changes[storeKey].newValue || {};
+          scheduleUpdate();
+        }
+      });
     } catch (_) {
       /* ignore */
     }
-  }
 
-  function isReviewed(jobId) {
-    return !!(jobId && reviewedMap[jobId]);
-  }
+    function persist() {
+      const ids = Object.keys(map);
+      if (ids.length > MARKER_LIMIT) {
+        ids
+          .sort((a, b) => (map[a].t || 0) - (map[b].t || 0))
+          .slice(0, ids.length - MARKER_LIMIT)
+          .forEach((id) => delete map[id]);
+      }
+      try {
+        chrome.storage.local.set({ [storeKey]: map });
+      } catch (_) {
+        /* ignore */
+      }
+    }
 
-  function markReviewed(jobId, meta) {
-    if (!jobId) return;
-    const existing = reviewedMap[jobId];
-    reviewedMap[jobId] = {
-      t: existing && existing.t ? existing.t : Date.now(), // keep first-seen time
-      title: (meta && meta.title) || (existing && existing.title) || "",
-      company: (meta && meta.company) || (existing && existing.company) || "",
-      fit: meta && meta.fit != null ? meta.fit : existing ? existing.fit : null,
+    function mark(jobId, meta) {
+      if (!jobId) return;
+      const existing = map[jobId];
+      map[jobId] = {
+        t: existing && existing.t ? existing.t : Date.now(), // keep first-seen time
+        title: (meta && meta.title) || (existing && existing.title) || "",
+        company: (meta && meta.company) || (existing && existing.company) || "",
+        fit: meta && meta.fit != null ? meta.fit : existing ? existing.fit : null,
+      };
+      persist();
+      console.log(LOG, "marked " + name + ":", jobId);
+      scheduleUpdate();
+    }
+
+    function unmark(jobId) {
+      if (!jobId || !map[jobId]) return;
+      delete map[jobId];
+      persist();
+      console.log(LOG, "unmarked " + name + ":", jobId);
+      scheduleUpdate();
+    }
+
+    return {
+      load,
+      mark,
+      unmark,
+      has: (jobId) => !!(jobId && map[jobId]),
+      get: (jobId) => map[jobId],
+      entries: () => Object.entries(map),
     };
-    persistReviewed();
-    console.log(LOG, "marked reviewed:", jobId);
-    scheduleUpdate();
   }
 
-  function unmarkReviewed(jobId) {
-    if (!jobId || !reviewedMap[jobId]) return;
-    delete reviewedMap[jobId];
-    persistReviewed();
-    console.log(LOG, "unmarked:", jobId);
-    scheduleUpdate();
-  }
+  const reviewed = makeMarkerStore("jobsum_reviewed", "reviewed");
+  const maybe = makeMarkerStore("jobsum_maybe", "maybe");
+
+  // Thin aliases keep the (many) reviewed call sites readable.
+  const isReviewed = reviewed.has;
+  const markReviewed = reviewed.mark;
+  const unmarkReviewed = reviewed.unmark;
+  const isMaybe = maybe.has;
 
   // Turkish relative time for "you saw this N ago".
   function relativeTime(t) {
@@ -441,7 +462,8 @@
         </div>
         <div id="jobsum-actions">
           <button id="jobsum-refresh" type="button" title="Özeti yeniden oluştur" aria-label="Özeti yeniden oluştur">Yenile</button>
-          <button id="jobsum-list" type="button" title="İşaretli ilanlar" aria-label="İşaretli ilanlar">Liste</button>
+          <button id="jobsum-list" type="button" title="İncelenen ilanlar" aria-label="İncelenen ilanlar">Liste</button>
+          <button id="jobsum-maybe-list" type="button" title="Olabilir listesi" aria-label="Olabilir listesi">Olabilir</button>
           <button id="jobsum-close" title="Close" aria-label="Close">×</button>
         </div>
       </div>
@@ -453,36 +475,47 @@
       panel.remove();
     });
     panel.querySelector("#jobsum-refresh").addEventListener("click", refreshSummary);
-    panel.querySelector("#jobsum-list").addEventListener("click", toggleList);
-    panel.querySelector("#jobsum-list").classList.toggle("is-active", showingList);
+    panel
+      .querySelector("#jobsum-list")
+      .addEventListener("click", () => showList("reviewed"));
+    panel
+      .querySelector("#jobsum-maybe-list")
+      .addEventListener("click", () => showList("maybe"));
+    updateListButtons(panel);
     return panel;
   }
 
-  // --- Reviewed-jobs list view ----------------------------------------------
-  // A permanent "Liste" button in the header toggles a list of every reviewed
-  // posting (title/company/when) with a link to LinkedIn's canonical job URL —
-  // useful when a marked job can no longer be found via search.
+  // --- Marker list views ----------------------------------------------------
+  // Two header buttons toggle a list of marked postings (title/company/fit/when)
+  // with a link to LinkedIn's canonical job URL — useful when a marked job can no
+  // longer be found via search. "Liste" shows reviewed jobs; "Olabilir" shows the
+  // stack-fit shortlist to revisit later.
 
-  function reviewedJobUrl(jobId) {
+  function markerJobUrl(jobId) {
     return `https://www.linkedin.com/jobs/view/${encodeURIComponent(jobId)}/`;
   }
 
-  function renderReviewedList() {
-    const entries = Object.entries(reviewedMap).sort(
-      (a, b) => (b[1].t || 0) - (a[1].t || 0)
-    );
+  function renderMarkerList(kind) {
+    const store = kind === "maybe" ? maybe : reviewed;
+    const headLabel = kind === "maybe" ? "Olabilir" : "İncelenen ilanlar";
+    const emptyLabel =
+      kind === "maybe"
+        ? 'Henüz "Olabilir" ilan yok.'
+        : "Henüz incelenen ilan yok.";
+    const entries = store.entries().sort((a, b) => (b[1].t || 0) - (a[1].t || 0));
     if (!entries.length) {
-      return `<div class="jobsum-status">Henüz işaretli ilan yok.</div>`;
+      return `<div class="jobsum-status">${emptyLabel}</div>`;
     }
     const items = entries
       .map(([id, v]) => {
         const title = escapeHtml(v.title || `İlan ${id}`);
         const company = escapeHtml(v.company || "");
+        const fit = v.fit != null ? `%${v.fit}` : "";
         const when = v.t ? escapeHtml(relativeTime(v.t)) : "";
-        const sub = [company, when].filter(Boolean).join(" · ");
+        const sub = [company, fit, when].filter(Boolean).join(" · ");
         return `
         <div class="jobsum-listitem">
-          <a href="${reviewedJobUrl(id)}" target="_blank" rel="noopener">
+          <a href="${markerJobUrl(id)}" target="_blank" rel="noopener">
             <span class="jobsum-listitem-title">${title}</span>
             <span class="jobsum-listitem-sub">${sub}</span>
           </a>
@@ -492,38 +525,51 @@
         </div>`;
       })
       .join("");
-    return `<div class="jobsum-listhead">İşaretli ilanlar (${entries.length})</div>${items}`;
+    return `<div class="jobsum-listhead">${headLabel} (${entries.length})</div>${items}`;
   }
 
   function attachListHandlers() {
     const panel = document.getElementById("jobsum-panel");
     if (!panel) return;
+    const store = listKind === "maybe" ? maybe : reviewed;
     panel.querySelectorAll(".jobsum-listitem-remove").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        unmarkReviewed(btn.getAttribute("data-jid"));
+        store.unmark(btn.getAttribute("data-jid"));
         if (showingList) {
-          setBody(renderReviewedList()); // refresh the list in place
+          setBody(renderMarkerList(listKind)); // refresh the list in place
           attachListHandlers();
         }
       });
     });
   }
 
-  function toggleList() {
-    showingList = !showingList;
-    const btn = document.getElementById("jobsum-list");
-    if (btn) btn.classList.toggle("is-active", showingList);
-    if (showingList) {
-      setBody(renderReviewedList());
-      attachListHandlers();
-    } else {
-      // Return to the summary view: force a re-render of the current job.
+  // Reflect which list (if any) is active on the two header buttons.
+  function updateListButtons(panelArg) {
+    const panel = panelArg || document.getElementById("jobsum-panel");
+    if (!panel) return;
+    const lb = panel.querySelector("#jobsum-list");
+    const mb = panel.querySelector("#jobsum-maybe-list");
+    if (lb) lb.classList.toggle("is-active", showingList && listKind === "reviewed");
+    if (mb) mb.classList.toggle("is-active", showingList && listKind === "maybe");
+  }
+
+  function showList(kind) {
+    // Clicking the already-open list closes it and returns to the summary.
+    if (showingList && listKind === kind) {
+      showingList = false;
+      updateListButtons();
       reviewRenderKey = null;
       lastJobId = null;
       scheduleUpdate();
+      return;
     }
+    showingList = true;
+    listKind = kind;
+    updateListButtons();
+    setBody(renderMarkerList(kind));
+    attachListHandlers();
   }
 
   // Review status block (under the header): warning banner + mark/unmark toggle
@@ -535,37 +581,54 @@
     const slot = panel.querySelector("#jobsum-review");
     if (!slot) return;
 
-    const key = `${jobId || ""}:${isReviewed(jobId)}`;
+    const key = `${jobId || ""}:${isReviewed(jobId)}:${isMaybe(jobId)}`;
     if (key === reviewRenderKey) return; // nothing changed
     reviewRenderKey = key;
 
     if (!jobId) {
+      slot.className = "jobsum-review";
       slot.innerHTML = "";
       return;
     }
 
-    if (isReviewed(jobId)) {
-      const when = relativeTime(reviewedMap[jobId].t || Date.now());
-      slot.className = "jobsum-review jobsum-review--seen";
-      slot.innerHTML = `
-        <span class="jobsum-review-text"><span class="jobsum-warn-icon">⚠</span> Bu ilanı ${escapeHtml(when)} gördün</span>
-        <button class="jobsum-review-btn jobsum-review-btn--undo" type="button">Geri al</button>`;
-      slot.querySelector("button").addEventListener("click", () => {
-        unmarkReviewed(jobId);
+    const reviewedNow = isReviewed(jobId);
+    const maybeNow = isMaybe(jobId);
+    slot.className = reviewedNow ? "jobsum-review jobsum-review--seen" : "jobsum-review";
+
+    // Left side: the reviewed state (warning + undo, or a "mark reviewed" button).
+    const reviewedHtml = reviewedNow
+      ? `<span class="jobsum-review-text"><span class="jobsum-warn-icon">⚠</span> Bu ilanı ${escapeHtml(
+          relativeTime(reviewed.get(jobId).t || Date.now())
+        )} gördün</span>
+         <button class="jobsum-review-btn jobsum-review-btn--undo" data-act="unreview" type="button">Geri al</button>`
+      : `<button class="jobsum-review-btn" data-act="review" type="button">İncelendi</button>`;
+
+    // Right side: the independent "Olabilir" shortlist toggle.
+    const maybeHtml = `<button class="jobsum-review-btn jobsum-review-btn--maybe${
+      maybeNow ? " is-active" : ""
+    }" data-act="maybe" type="button">${maybeNow ? "Olabilir ✓" : "Olabilir"}</button>`;
+
+    slot.innerHTML = reviewedHtml + maybeHtml;
+
+    // Snapshot title/company/fit so the marked entry shows up nicely in its list.
+    const meta = () => {
+      const c = CACHE.get(jobId);
+      return {
+        title: (c && c.summary && c.summary.job_title) || lastHeader.title || "",
+        company: (c && c.summary && c.summary.company) || lastHeader.company || "",
+        fit: cachedFit(jobId),
+      };
+    };
+
+    slot.querySelectorAll("button").forEach((btn) => {
+      const act = btn.getAttribute("data-act");
+      btn.addEventListener("click", () => {
+        if (act === "review") markReviewed(jobId, meta());
+        else if (act === "unreview") unmarkReviewed(jobId);
+        else if (act === "maybe")
+          isMaybe(jobId) ? maybe.unmark(jobId) : maybe.mark(jobId, meta());
       });
-    } else {
-      slot.className = "jobsum-review";
-      slot.innerHTML = `
-        <button class="jobsum-review-btn" type="button">İncelendi</button>`;
-      slot.querySelector("button").addEventListener("click", () => {
-        const c = CACHE.get(jobId);
-        markReviewed(jobId, {
-          title: (c && c.summary && c.summary.job_title) || lastHeader.title || "",
-          company: (c && c.summary && c.summary.company) || lastHeader.company || "",
-          fit: cachedFit(jobId),
-        });
-      });
-    }
+    });
   }
 
   // Header: position title on top, company underneath (like LinkedIn's top card).
@@ -920,7 +983,8 @@
     console.log(LOG, "extension context gone; content script stopped");
   }
 
-  loadReviewed(); // load persisted "reviewed" memory, then reflect it
+  reviewed.load(); // load persisted "reviewed" + "maybe" memory, then reflect it
+  maybe.load();
   ensurePanel();
   scheduleUpdate();
 })();
