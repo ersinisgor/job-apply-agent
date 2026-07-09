@@ -11,6 +11,10 @@
   "use strict";
 
   const LOG = "[JobSum]";
+  // Flip to true to print DIAG output (selector-fallback warnings + the DOM dump)
+  // used to fix selectors against LinkedIn's hashed-class UI. Off by default so the
+  // console stays quiet during normal use.
+  const DEBUG = false;
   console.log(LOG, "content script loaded:", location.href);
 
   // --- LinkedIn DOM selectors (brittle; tried in order, first match wins) ---
@@ -295,6 +299,7 @@
   // Log the DOM around the longest visible text so failing selectors can be
   // fixed from a pasted console dump (one shot per job).
   function logDomDiagnosis() {
+    if (!DEBUG) return; // DIAG output is opt-in via the DEBUG flag
     const { el: best, len } = findLongestVisibleTextEl();
     if (!best) {
       console.warn(LOG, "DIAG: no visible text node found at all");
@@ -846,23 +851,26 @@
         description = fallbackDescription();
         if (description && warnedNoSelectorFor !== pendingJobId) {
           warnedNoSelectorFor = pendingJobId;
-          console.warn(
-            LOG,
-            "description selectors matched nothing; using details-pane fallback"
-          );
+          if (DEBUG)
+            console.warn(
+              LOG,
+              "description selectors matched nothing; using details-pane fallback"
+            );
         }
       }
       if (!description) {
         description = heuristicDescription();
         if (warnedNoSelectorFor !== pendingJobId) {
           warnedNoSelectorFor = pendingJobId;
-          console.warn(
-            LOG,
-            description
-              ? "selectors + pane fallback empty; using longest-text heuristic"
-              : "no description found yet (selectors + fallbacks empty)"
-          );
-          logDomDiagnosis();
+          if (DEBUG) {
+            console.warn(
+              LOG,
+              description
+                ? "selectors + pane fallback empty; using longest-text heuristic"
+                : "no description found yet (selectors + fallbacks empty)"
+            );
+            logDomDiagnosis();
+          }
         }
       }
       if (
