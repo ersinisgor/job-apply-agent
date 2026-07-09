@@ -175,9 +175,55 @@
 
   // --- Helpers ---
 
+  // LinkedIn's newer jobs UI renders the job pane inside open shadow roots and
+  // same-origin iframes, which plain document.querySelector / TreeWalker cannot
+  // reach. collectRoots() returns the main document plus every nested open
+  // shadow root and readable (same-origin) iframe document, so all the text
+  // extraction below can pierce those boundaries. Cross-origin iframes throw on
+  // access and are silently skipped.
+  function collectRoots() {
+    const roots = [document];
+    for (let i = 0; i < roots.length; i++) {
+      const root = roots[i];
+      let all;
+      try {
+        all = root.querySelectorAll("*");
+      } catch (_) {
+        continue;
+      }
+      all.forEach((el) => {
+        if (el.shadowRoot) roots.push(el.shadowRoot);
+        if (el.tagName === "IFRAME") {
+          let doc = null;
+          try {
+            doc = el.contentDocument;
+          } catch (_) {
+            /* cross-origin; not readable */
+          }
+          if (doc) roots.push(doc);
+        }
+      });
+    }
+    return roots;
+  }
+
+  function deepQuery(selector, roots) {
+    for (const root of roots || collectRoots()) {
+      let el = null;
+      try {
+        el = root.querySelector(selector);
+      } catch (_) {
+        /* invalid selector for this root type; skip */
+      }
+      if (el) return el;
+    }
+    return null;
+  }
+
   function firstMatchText(selectorList) {
+    const roots = collectRoots();
     for (const sel of selectorList) {
-      const el = document.querySelector(sel);
+      const el = deepQuery(sel, roots);
       if (el) {
         const text = el.innerText.trim();
         if (text) return text;
@@ -189,8 +235,9 @@
   // Fallback: when no description selector matches, take the whole details
   // pane's text (capped) — resilient to LinkedIn DOM changes.
   function fallbackDescription() {
+    const roots = collectRoots();
     for (const sel of SELECTORS.detailsPane) {
-      const el = document.querySelector(sel);
+      const el = deepQuery(sel, roots);
       if (el) {
         const text = el.innerText.trim();
         if (text.length >= 200) return text.slice(0, 15000);
@@ -205,19 +252,29 @@
   // like a content pane (not the whole page). LinkedIn hides JSON blobs in
   // <code> tags, so hidden nodes must be skipped.
   function findLongestVisibleTextEl() {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let best = null;
     let bestLen = 0;
-    let node;
-    while ((node = walker.nextNode())) {
-      const parent = node.parentElement;
-      if (!parent) continue;
-      const len = node.textContent.trim().length;
-      if (len <= bestLen) continue;
-      if (parent.closest("#jobsum-panel,code,script,style,noscript,template")) continue;
-      if (parent.checkVisibility && !parent.checkVisibility()) continue;
-      best = parent;
-      bestLen = len;
+    for (const root of collectRoots()) {
+      const scope = root.body || root; // Document -> body; ShadowRoot -> itself
+      if (!scope) continue;
+      const doc = root.ownerDocument || root; // owning Document for createTreeWalker
+      let walker;
+      try {
+        walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      } catch (_) {
+        continue;
+      }
+      let node;
+      while ((node = walker.nextNode())) {
+        const parent = node.parentElement;
+        if (!parent) continue;
+        const len = node.textContent.trim().length;
+        if (len <= bestLen) continue;
+        if (parent.closest("#jobsum-panel,code,script,style,noscript,template")) continue;
+        if (parent.checkVisibility && !parent.checkVisibility()) continue;
+        best = parent;
+        bestLen = len;
+      }
     }
     return { el: best, len: bestLen };
   }
@@ -263,20 +320,47 @@
       }
       console.warn(LOG, "DIAG ancestor chain:\n" + chain.join("\n"));
     }
-    let shadows = 0;
-    document.querySelectorAll("*").forEach((e) => {
-      if (e.shadowRoot) shadows += 1;
-    });
+    const roots = collectRoots();
+    const readableIframes = roots.filter(
+      (r) => r.nodeType === 9 && r !== document
+    ).length;
+    const shadows = roots.filter((r) => r.nodeType === 11).length;
+    const totalIframes = document.querySelectorAll("iframe").length;
     console.warn(
       LOG,
-      `DIAG iframes=${document.querySelectorAll("iframe").length} shadowRoots=${shadows}`
+      `DIAG iframes=${totalIframes} (readable=${readableIframes}) ` +
+        `shadowRoots=${shadows} rootsSearched=${roots.length}`
     );
+  }
+
+  // After the extension is reloaded/updated, the content script already injected
+  // in open tabs becomes orphaned: its runtime is dead but its interval/observer
+  // keep running, spamming "chrome-extension://invalid/" errors every tick. Detect
+  // that and self-destruct (see teardown() at the bottom).
+  function extensionAlive() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime && !!chrome.runtime.id;
+    } catch (_) {
+      return false; // accessing chrome.runtime throws once the context is gone
+    }
+  }
+
+  // The content script is injected on every LinkedIn page (so it survives SPA
+  // navigation into the jobs view in any tab), but the panel and its work only
+  // belong on the jobs pages.
+  function isJobsPage() {
+    return location.pathname.startsWith("/jobs/");
   }
 
   function getCurrentJobId() {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("currentJobId");
     if (fromUrl) return fromUrl;
+
+    // Standalone job page (/jobs/view/<id>/…): the id lives in the path, and
+    // there is no list card to read it from.
+    const fromPath = location.pathname.match(/\/jobs\/view\/(\d+)/);
+    if (fromPath) return fromPath[1];
 
     const selected = document.querySelector(
       ".jobs-search-results-list__list-item--active [data-job-id], li.jobs-search-results__list-item.active [data-occludable-job-id], .job-card-container--active [data-job-id]"
@@ -491,6 +575,7 @@
   }
 
   function ensurePanel() {
+    if (!isJobsPage()) return null;
     if (userClosed) return null;
     let panel = document.getElementById("jobsum-panel");
     if (!panel) {
@@ -588,11 +673,34 @@
   // Summary call to the backend (only to our own localhost service).
   function callBackend(payload) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: "SUMMARIZE", payload }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error("Extension messaging error. Reload the page."));
-          return;
-        }
+      if (!extensionAlive()) {
+        reject(new Error("Extension reloaded. Refresh the page."));
+        return;
+      }
+      let sending;
+      try {
+        sending = chrome.runtime.sendMessage(
+          { type: "SUMMARIZE", payload },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error("Extension messaging error. Reload the page."));
+              return;
+            }
+            handle(response);
+          }
+        );
+      } catch (_) {
+        reject(new Error("Extension reloaded. Refresh the page."));
+        return;
+      }
+      // Some Chrome builds return a Promise instead of using the callback.
+      if (sending && typeof sending.then === "function") {
+        sending.then(handle, () =>
+          reject(new Error("Extension messaging error. Reload the page."))
+        );
+      }
+
+      function handle(response) {
         if (!response) {
           reject(new Error("No response from backend."));
           return;
@@ -602,7 +710,7 @@
           return;
         }
         resolve(response.data);
-      });
+      }
     });
   }
 
@@ -664,6 +772,18 @@
   }
 
   function maybeUpdate() {
+    // Orphaned after an extension reload: stop everything and go quiet.
+    if (!extensionAlive()) {
+      teardown();
+      return;
+    }
+    // Off the jobs pages (feed, messaging, a profile, …) the script is inert:
+    // remove any leftover panel from a previous in-tab navigation and bail.
+    if (!isJobsPage()) {
+      const stale = document.getElementById("jobsum-panel");
+      if (stale) stale.remove();
+      return;
+    }
     ensurePanel(); // re-add the panel if it was removed
     markSeenCards(); // reflect reviewed state in the list
 
@@ -737,10 +857,29 @@
 
   const observer = new MutationObserver(scheduleUpdate);
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  setInterval(maybeUpdate, 700);
+  const pollTimer = setInterval(maybeUpdate, 700);
 
   // Capture dismiss/undo clicks anywhere on the page.
   document.addEventListener("click", onDocClick, true);
+
+  // Dismantle this (now orphaned) instance after an extension reload so it stops
+  // polling a dead context and flooding the console.
+  let torndown = false;
+  function teardown() {
+    if (torndown) return;
+    torndown = true;
+    try {
+      observer.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+    clearInterval(pollTimer);
+    clearTimeout(debounceTimer);
+    document.removeEventListener("click", onDocClick, true);
+    const panel = document.getElementById("jobsum-panel");
+    if (panel) panel.remove();
+    console.log(LOG, "extension context gone; content script stopped");
+  }
 
   loadReviewed(); // load persisted "reviewed" memory, then reflect it
   ensurePanel();
