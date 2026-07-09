@@ -22,6 +22,19 @@
       "article.jobs-description__container",
       ".jobs-description__container",
       ".jobs-box__html-content",
+      // guest (logged-out) view
+      ".show-more-less-html__markup",
+      ".description__text",
+    ],
+    // Right-hand details pane; used as a raw-text fallback when the description
+    // selectors above stop matching (LinkedIn changes its DOM often). The backend
+    // LLM tolerates the extra chrome text around the description.
+    detailsPane: [
+      ".jobs-search__job-details--wrapper",
+      ".jobs-search__job-details",
+      ".scaffold-layout__detail",
+      ".jobs-details",
+      ".job-view-layout",
     ],
     title: [
       ".job-details-jobs-unified-top-card__job-title",
@@ -59,6 +72,7 @@
   let requestSeq = 0; // request sequence to avoid race conditions
   let lastBodyHtml = `<div class="jobsum-status">Ready — click a job on the left.</div>`;
   let userClosed = false; // don't reopen if the user closed the panel
+  let warnedNoSelectorFor = null; // log the missing-description warning once per job
 
   // Per-job summary cache: returning to a job shows it instantly.
   const CACHE = new Map(); // jobId -> { summary, description }
@@ -82,6 +96,93 @@
       }
     }
     return "";
+  }
+
+  // Fallback: when no description selector matches, take the whole details
+  // pane's text (capped) — resilient to LinkedIn DOM changes.
+  function fallbackDescription() {
+    for (const sel of SELECTORS.detailsPane) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const text = el.innerText.trim();
+        if (text.length >= 200) return text.slice(0, 15000);
+      }
+    }
+    return "";
+  }
+
+  // Last-resort fallback for unknown layouts (e.g. the new /jobs/search-results
+  // UI): find the longest VISIBLE text node on the page (almost always a job
+  // description paragraph), then climb to the largest container that still looks
+  // like a content pane (not the whole page). LinkedIn hides JSON blobs in
+  // <code> tags, so hidden nodes must be skipped.
+  function findLongestVisibleTextEl() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let best = null;
+    let bestLen = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent) continue;
+      const len = node.textContent.trim().length;
+      if (len <= bestLen) continue;
+      if (parent.closest("#jobsum-panel,code,script,style,noscript,template")) continue;
+      if (parent.checkVisibility && !parent.checkVisibility()) continue;
+      best = parent;
+      bestLen = len;
+    }
+    return { el: best, len: bestLen };
+  }
+
+  function heuristicDescription() {
+    const { el: start, len } = findLongestVisibleTextEl();
+    if (!start || len < 150) return ""; // no paragraph-sized visible text yet
+    let el = start;
+    while (el.parentElement && el.parentElement !== document.body) {
+      const parentLen = (el.parentElement.innerText || "").trim().length;
+      if (parentLen > 12000) break; // don't swallow the whole page
+      el = el.parentElement;
+    }
+    const text = (el.innerText || "").trim();
+    return text.length >= 300 ? text.slice(0, 15000) : "";
+  }
+
+  // Log the DOM around the longest visible text so failing selectors can be
+  // fixed from a pasted console dump (one shot per job).
+  function logDomDiagnosis() {
+    const { el: best, len } = findLongestVisibleTextEl();
+    if (!best) {
+      console.warn(LOG, "DIAG: no visible text node found at all");
+    } else {
+      console.warn(
+        LOG,
+        `DIAG longest visible text: ${len} chars:`,
+        best.textContent.trim().slice(0, 100)
+      );
+      let el = best;
+      const chain = [];
+      while (el && el !== document.body && chain.length < 10) {
+        const cls = String(
+          el.className && el.className.baseVal !== undefined
+            ? el.className.baseVal
+            : el.className || ""
+        ).slice(0, 100);
+        const textLen = (el.innerText || "").trim().length;
+        chain.push(
+          `<${el.tagName.toLowerCase()}> id=${el.id || "-"} class=${cls || "-"} len=${textLen}`
+        );
+        el = el.parentElement;
+      }
+      console.warn(LOG, "DIAG ancestor chain:\n" + chain.join("\n"));
+    }
+    let shadows = 0;
+    document.querySelectorAll("*").forEach((e) => {
+      if (e.shadowRoot) shadows += 1;
+    });
+    console.warn(
+      LOG,
+      `DIAG iframes=${document.querySelectorAll("iframe").length} shadowRoots=${shadows}`
+    );
   }
 
   function getCurrentJobId() {
@@ -250,7 +351,30 @@
 
     // Summarize once the pending job's description has loaded.
     if (pendingJobId) {
-      const description = firstMatchText(SELECTORS.description);
+      let description = firstMatchText(SELECTORS.description);
+      if (!description) {
+        description = fallbackDescription();
+        if (description && warnedNoSelectorFor !== pendingJobId) {
+          warnedNoSelectorFor = pendingJobId;
+          console.warn(
+            LOG,
+            "description selectors matched nothing; using details-pane fallback"
+          );
+        }
+      }
+      if (!description) {
+        description = heuristicDescription();
+        if (warnedNoSelectorFor !== pendingJobId) {
+          warnedNoSelectorFor = pendingJobId;
+          console.warn(
+            LOG,
+            description
+              ? "selectors + pane fallback empty; using longest-text heuristic"
+              : "no description found yet (selectors + fallbacks empty)"
+          );
+          logDomDiagnosis();
+        }
+      }
       if (
         description &&
         description.length >= 40 &&
