@@ -197,6 +197,30 @@
   font-weight: 600;
 }
 
+/* Draw the eye to the "already reviewed" warning: the ⚠ pulses (scales up and
+   back) three times each time a reviewed job's banner is rendered. */
+.jobsum-warn-icon {
+  display: inline-block;
+  transform-origin: center;
+  animation: jobsum-warn-pulse 0.75s ease-in-out 3;
+}
+
+@keyframes jobsum-warn-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jobsum-warn-icon {
+    animation: none;
+  }
+}
+
 .jobsum-review-btn {
   background: transparent;
   border: 1px solid #1a7f37;

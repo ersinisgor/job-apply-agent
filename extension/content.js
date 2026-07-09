@@ -543,7 +543,7 @@
       const when = relativeTime(reviewedMap[jobId].t || Date.now());
       slot.className = "jobsum-review jobsum-review--seen";
       slot.innerHTML = `
-        <span class="jobsum-review-text">⚠ Bu ilanı ${escapeHtml(when)} gördün</span>
+        <span class="jobsum-review-text"><span class="jobsum-warn-icon">⚠</span> Bu ilanı ${escapeHtml(when)} gördün</span>
         <button class="jobsum-review-btn jobsum-review-btn--undo" type="button">Geri al</button>`;
       slot.querySelector("button").addEventListener("click", () => {
         unmarkReviewed(jobId);
