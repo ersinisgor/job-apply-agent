@@ -27,13 +27,41 @@
 
 #jobsum-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 10px 14px;
   background: #0a66c2; /* LinkedIn blue */
   color: #ffffff;
-  font-weight: 600;
   flex: 0 0 auto;
+}
+
+/* Position title on top, company underneath — like LinkedIn's top card. */
+#jobsum-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* allow text truncation inside flex */
+}
+
+#jobsum-title {
+  font-weight: 600;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; /* long titles: max 2 lines */
+  -webkit-box-orient: vertical;
+}
+
+#jobsum-company {
+  font-weight: 400;
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#jobsum-company:empty {
+  display: none;
 }
 
 #jobsum-close {

@@ -52,18 +52,15 @@
     ],
   };
 
-  // Panel field order and labels (labels English; values come from Claude in Turkish).
+  // Panel field order and labels. Deliberately minimal: one glance should be
+  // enough to decide whether the job fits. "work" is composed client-side from
+  // work_type + work_type_note (single row, e.g. "on-site — İstanbul tercihli").
   const FIELDS = [
-    { key: "role_summary", label: "Role Summary" },
-    { key: "work_type", label: "Work Type" },
-    { key: "work_type_note", label: "Work Type Note" },
-    { key: "visa_sponsorship", label: "Visa / Sponsorship" },
-    { key: "primary_language", label: "Primary Language" },
-    { key: "secondary_language", label: "Secondary Language (Bonus)" },
-    { key: "tools", label: "Tools" },
-    { key: "frameworks", label: "Frameworks" },
-    { key: "libraries", label: "Libraries" },
-    { key: "min_experience", label: "Min. Experience" },
+    { key: "role_summary", label: "Özet" },
+    { key: "work", label: "Çalışma" },
+    { key: "stack", label: "Stack" },
+    { key: "min_experience", label: "Deneyim" },
+    { key: "visa_sponsorship", label: "Vize / Sponsorluk" }, // shown only when present
   ];
 
   let lastJobId = null; // most recently shown job id
@@ -71,6 +68,7 @@
   let lastShownDescription = ""; // description of the shown job (stale guard)
   let requestSeq = 0; // request sequence to avoid race conditions
   let lastBodyHtml = `<div class="jobsum-status">Ready — click a job on the left.</div>`;
+  let lastHeader = { title: "Job Summary", company: "" }; // panel header state
   let userClosed = false; // don't reopen if the user closed the panel
   let warnedNoSelectorFor = null; // log the missing-description warning once per job
 
@@ -209,7 +207,10 @@
     panel.id = "jobsum-panel";
     panel.innerHTML = `
       <div id="jobsum-header">
-        <span id="jobsum-title">Job Summary</span>
+        <div id="jobsum-heading">
+          <span id="jobsum-title">${escapeHtml(lastHeader.title)}</span>
+          <span id="jobsum-company">${escapeHtml(lastHeader.company)}</span>
+        </div>
         <button id="jobsum-close" title="Close" aria-label="Close">×</button>
       </div>
       <div id="jobsum-body">${lastBodyHtml}</div>
@@ -219,6 +220,19 @@
       panel.remove();
     });
     return panel;
+  }
+
+  // Header: position title on top, company underneath (like LinkedIn's top card).
+  // Falls back to the static "Job Summary" label until a job is summarized.
+  function setHeader(title, company) {
+    lastHeader = {
+      title: (title || "").trim() || "Job Summary",
+      company: (company || "").trim(),
+    };
+    const panel = ensurePanel();
+    if (!panel) return;
+    panel.querySelector("#jobsum-title").textContent = lastHeader.title;
+    panel.querySelector("#jobsum-company").textContent = lastHeader.company;
   }
 
   function ensurePanel() {
@@ -248,6 +262,16 @@
   }
 
   function renderSummary(data) {
+    // Prefer what Claude extracted from the posting; fall back to the DOM
+    // selectors (which only match LinkedIn's old UI).
+    setHeader(
+      data.job_title || firstMatchText(SELECTORS.title),
+      data.company || firstMatchText(SELECTORS.company)
+    );
+    // Compose the single-row work field: "on-site — İstanbul tercihli".
+    const workType =
+      data.work_type && data.work_type !== "unspecified" ? data.work_type : "";
+    data = { ...data, work: [workType, data.work_type_note].filter(Boolean).join(" — ") };
     const rows = FIELDS.map((field) => {
       const rendered = renderValue(data[field.key]);
       if (rendered === null) return "";
@@ -346,6 +370,7 @@
       }
       console.log(LOG, "new job detected:", jobId);
       pendingJobId = jobId;
+      setHeader("", ""); // drop the previous job's title while loading
       showLoading(); // clear the old summary immediately
     }
 
