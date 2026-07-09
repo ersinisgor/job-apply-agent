@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
 from functools import lru_cache
 
 import anthropic
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import CV_BASE_FILE, settings
+from .config import CV_BASE_FILE, SUMMARY_CACHE_FILE, settings
 from .summary_schema import JobSummary, SummarizeRequest
 
 logger = logging.getLogger("applyjobs.summary")
@@ -137,12 +138,81 @@ def _extract_json(text: str) -> str:
     return text[start : end + 1]
 
 
+# Summary cache, keyed by LinkedIn job id. The same posting gets opened repeatedly —
+# in several tabs, and via BOTH the /jobs/search-results and the /jobs/view/<id>
+# URLs — so keying by id (not by the slightly different extracted text each page
+# yields) means every job costs exactly one model call. Bounded and LRU-evicted so a
+# long browsing session can't grow it without limit, and mirrored to disk
+# (SUMMARY_CACHE_FILE) so it survives an API restart.
+_SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
+_CACHE_MAX = 1000
+
+
+def _load_cache() -> None:
+    """Populate the in-memory cache from disk at startup (best-effort)."""
+    try:
+        raw = json.loads(SUMMARY_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return  # missing or corrupt file: start empty
+    if not isinstance(raw, dict):
+        return
+    for job_id, data in raw.items():
+        try:
+            _SUMMARY_CACHE[str(job_id)] = JobSummary.model_validate(data)
+        except Exception:  # noqa: BLE001 - skip entries that no longer fit the schema
+            continue
+    logger.info("loaded %d cached summaries from %s", len(_SUMMARY_CACHE), SUMMARY_CACHE_FILE)
+
+
+def _save_cache() -> None:
+    """Write the whole cache to disk atomically (temp file + replace)."""
+    try:
+        SUMMARY_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {k: v.model_dump(mode="json") for k, v in _SUMMARY_CACHE.items()}
+        tmp = SUMMARY_CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(SUMMARY_CACHE_FILE)
+    except OSError:
+        logger.warning("could not persist summary cache to %s", SUMMARY_CACHE_FILE)
+
+
+def _cache_get(job_id: str | None) -> JobSummary | None:
+    if not job_id:
+        return None
+    summary = _SUMMARY_CACHE.get(job_id)
+    if summary is not None:
+        _SUMMARY_CACHE.move_to_end(job_id)  # mark most-recently used
+    return summary
+
+
+def _cache_put(job_id: str | None, summary: JobSummary) -> None:
+    if not job_id:
+        return
+    _SUMMARY_CACHE[job_id] = summary
+    _SUMMARY_CACHE.move_to_end(job_id)
+    while len(_SUMMARY_CACHE) > _CACHE_MAX:
+        _SUMMARY_CACHE.popitem(last=False)  # evict least-recently used
+    _save_cache()
+
+
+_load_cache()
+
+
 def summarize(req: SummarizeRequest) -> JobSummary:
     """Turn a job-posting text into a structured (Turkish-valued) summary."""
     if not settings.anthropic_api_key:
         raise MissingCredentialsError(
             "ANTHROPIC_API_KEY is not set. Add it to the project .env file."
         )
+
+    # A refresh (the panel's "Yenile" button) skips the cache READ but still
+    # overwrites the stored entry below — recomputing from whatever text the page
+    # currently yields.
+    if not req.refresh:
+        cached = _cache_get(req.job_id)
+        if cached is not None:
+            logger.info("summary cache hit for job %s", req.job_id)
+            return cached
 
     # The CV + prompt + schema prefix is identical for every posting the user views,
     # so cache it — only the per-job user message varies. (Below Haiku's 4096-token
@@ -160,12 +230,15 @@ def summarize(req: SummarizeRequest) -> JobSummary:
         response = _client().messages.create(
             model=settings.summary_model,
             max_tokens=600,  # the summary is deliberately terse; cap the latency too
+            temperature=0,  # deterministic: the same posting scores the same every time
             system=system,
             messages=[{"role": "user", "content": _build_user_message(req)}],
         )
         text = "".join(b.text for b in response.content if b.type == "text")
         try:
-            return JobSummary.model_validate_json(_extract_json(text))
+            summary = JobSummary.model_validate_json(_extract_json(text))
+            _cache_put(req.job_id, summary)
+            return summary
         except Exception as exc:  # noqa: BLE001 - malformed JSON: retry once
             last_error = exc
     raise ValueError(f"Model did not return valid JSON: {last_error}")

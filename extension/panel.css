@@ -249,7 +249,8 @@
   flex: 0 0 auto;
 }
 
-#jobsum-list {
+#jobsum-list,
+#jobsum-refresh {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.5);
   color: #ffffff;
@@ -260,7 +261,8 @@
 }
 
 #jobsum-list:hover,
-#jobsum-list.is-active {
+#jobsum-list.is-active,
+#jobsum-refresh:hover {
   background: rgba(255, 255, 255, 0.18);
 }
 

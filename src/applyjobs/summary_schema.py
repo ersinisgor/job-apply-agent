@@ -75,3 +75,11 @@ class SummarizeRequest(BaseModel):
     title: str | None = Field(default=None, description="Job title.")
     company: str | None = Field(default=None, description="Company name.")
     location: str | None = Field(default=None, description="Location.")
+    job_id: str | None = Field(
+        default=None,
+        description="LinkedIn job id; used as the server-side summary cache key.",
+    )
+    refresh: bool = Field(
+        default=False,
+        description="If true, ignore the cached summary and recompute, overwriting it.",
+    )

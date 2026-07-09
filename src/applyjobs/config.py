@@ -46,6 +46,9 @@ PROCESSED_STATE_FILE = STATE_DIR / "processed.json"
 HUNTR_SEEN_FILE = STATE_DIR / "huntr_seen.json"
 # Legacy: highest Huntr job createdAt (no longer used; kept so old files are harmless).
 HUNTR_CURSOR_FILE = STATE_DIR / "huntr_cursor.txt"
+# Job-summary cache for the browser-extension API, keyed by LinkedIn job id, so a
+# posting is summarized once and survives an API restart.
+SUMMARY_CACHE_FILE = STATE_DIR / "summary_cache.json"
 
 # Values in the "Başvuru" (B) column that should NOT trigger CV generation.
 SKIP_BASVURU_VALUES = {"Geçmiş", "Vazgeçildi", "Başvurulmuş", "✓"}

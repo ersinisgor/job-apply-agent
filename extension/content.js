@@ -435,6 +435,7 @@
           <span id="jobsum-company">${escapeHtml(lastHeader.company)}</span>
         </div>
         <div id="jobsum-actions">
+          <button id="jobsum-refresh" type="button" title="Özeti yeniden oluştur" aria-label="Özeti yeniden oluştur">Yenile</button>
           <button id="jobsum-list" type="button" title="İşaretli ilanlar" aria-label="İşaretli ilanlar">Liste</button>
           <button id="jobsum-close" title="Close" aria-label="Close">×</button>
         </div>
@@ -446,6 +447,7 @@
       userClosed = true;
       panel.remove();
     });
+    panel.querySelector("#jobsum-refresh").addEventListener("click", refreshSummary);
     panel.querySelector("#jobsum-list").addEventListener("click", toggleList);
     panel.querySelector("#jobsum-list").classList.toggle("is-active", showingList);
     return panel;
@@ -714,12 +716,41 @@
     });
   }
 
-  function requestSummary(jobId, description) {
+  // The 3-tier description extraction, mirroring maybeUpdate's chain. Used by the
+  // "Yenile" button to re-read the current page's text before recomputing.
+  function getDescription() {
+    let d = firstMatchText(SELECTORS.description);
+    if (!d) d = fallbackDescription();
+    if (!d) d = heuristicDescription();
+    return d || "";
+  }
+
+  // "Yenile": recompute the current job's summary from whatever text is on screen
+  // now (e.g. a cleaner /jobs/view page than the search page it was first cached
+  // from), bypassing both caches and overwriting them with the fresh result.
+  function refreshSummary() {
+    if (showingList) return; // only meaningful in the summary view
+    const jobId = lastJobId || getCurrentJobId();
+    if (!jobId) return;
+    const description = getDescription();
+    if (!description || description.length < 40) {
+      showError("Açıklama bulunamadı; özet yenilenemedi.");
+      return;
+    }
+    CACHE.delete(jobId); // drop the stale client-side copy
+    lastShownDescription = description;
+    showLoading();
+    requestSummary(jobId, description, { force: true });
+  }
+
+  function requestSummary(jobId, description, opts) {
     const payload = {
       text: description,
       title: firstMatchText(SELECTORS.title) || null,
       company: firstMatchText(SELECTORS.company) || null,
       location: firstMatchText(SELECTORS.location) || null,
+      job_id: jobId || null, // server caches by this so a job is summarized once
+      refresh: !!(opts && opts.force), // "Yenile": bypass + overwrite the cache
     };
 
     const seq = ++requestSeq;
