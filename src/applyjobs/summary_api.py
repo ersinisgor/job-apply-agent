@@ -25,19 +25,28 @@ import anthropic
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import CV_BASE_FILE, SUMMARY_CACHE_FILE, settings
+from .config import CV_BASE_FILE, PROJECTS_LIST_FILE, SUMMARY_CACHE_FILE, settings
 from .summary_schema import JobSummary, SummarizeRequest
 
 logger = logging.getLogger("applyjobs.summary")
 
 # The candidate's master profile, loaded once. Injected into the prompt so the model
-# can score how well each posting fits the user (fit_score / fit_reason). Missing file
-# is tolerated: scoring is then disabled (the model is told to emit fit_score = 0).
-try:
-    _CV_TEXT = CV_BASE_FILE.read_text(encoding="utf-8").strip()
-except OSError:
-    _CV_TEXT = ""
-    logger.warning("CV file %s not found; fit scoring disabled.", CV_BASE_FILE)
+# can score how well each posting fits the user (fit_score / fit_reason). The profile
+# is CV + past-project tech: the candidate knows more than the CV lists (e.g. Next.js
+# used in a project but absent from the CV still counts as a matched skill). Both files
+# are optional; if neither loads, scoring is disabled (model emits fit_score = 0).
+def _read_profile_file(path, label: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        logger.warning("%s file %s not found.", label, path)
+        return ""
+
+
+_CV_TEXT = _read_profile_file(CV_BASE_FILE, "CV")
+_PROJECTS_TEXT = _read_profile_file(PROJECTS_LIST_FILE, "Projects")
+if not _CV_TEXT and not _PROJECTS_TEXT:
+    logger.warning("No CV or projects profile loaded; fit scoring disabled.")
 
 # The system prompt is in English, but it instructs the model to write the field
 # VALUES in Turkish so the panel reads as a quick Turkish summary.
@@ -60,6 +69,9 @@ SYSTEM_PROMPT = (
     "posting mentions it.\n"
     "- 'fit_score' (0-100): how well the posting's REQUIRED TECHNOLOGIES fit the "
     "CANDIDATE PROFILE given below — compare required languages/frameworks/tools ONLY. "
+    "The candidate KNOWS every technology named ANYWHERE in the profile — both the CV "
+    "and the PAST PROJECTS — so a required technology counts as MET if it appears in "
+    "either (e.g. Next.js used in a past project counts even if the CV omits it). "
     "IGNORE experience and seniority ENTIRELY: do NOT lower the score for a senior/lead "
     "title or a years-of-experience requirement, and do NOT raise it for a junior one — "
     "the years asked for and the candidate's years must not affect the number at all. "
@@ -71,11 +83,19 @@ SYSTEM_PROMPT = (
 )
 
 
-def _cv_block() -> str:
-    """The candidate profile appended to the system prompt, or '' when unavailable."""
-    if not _CV_TEXT:
+def _profile_block() -> str:
+    """The candidate profile (CV + past-project tech) appended to the system prompt."""
+    parts: list[str] = []
+    if _CV_TEXT:
+        parts.append("CV / RESUME:\n" + _CV_TEXT)
+    if _PROJECTS_TEXT:
+        parts.append(
+            "PAST PROJECTS the candidate has built — treat EVERY technology named here "
+            "as one the candidate KNOWS, even if the CV omits it:\n" + _PROJECTS_TEXT
+        )
+    if not parts:
         return ""
-    return "\n\nCANDIDATE PROFILE (score fit_score against this):\n" + _CV_TEXT
+    return "\n\nCANDIDATE PROFILE (score fit_score against this):\n" + "\n\n".join(parts)
 
 
 class MissingCredentialsError(RuntimeError):
@@ -151,7 +171,7 @@ _SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
 _CACHE_MAX = 1000
 # Bump whenever the scoring rubric (SYSTEM_PROMPT) or JobSummary schema changes, so a
 # stale on-disk cache from the old rules is discarded instead of returning old scores.
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 
 
 def _load_cache() -> None:
@@ -232,7 +252,7 @@ def summarize(req: SummarizeRequest) -> JobSummary:
     system = [
         {
             "type": "text",
-            "text": SYSTEM_PROMPT + _cv_block() + _JSON_INSTRUCTION,
+            "text": SYSTEM_PROMPT + _profile_block() + _JSON_INSTRUCTION,
             "cache_control": {"type": "ephemeral"},
         }
     ]
