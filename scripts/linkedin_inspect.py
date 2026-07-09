@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-from src.applyjobs.config import LINKEDIN_STATE_FILE  # noqa: E402
 from src.applyjobs.scraper import _USER_AGENT  # noqa: E402
 
 
@@ -21,10 +20,9 @@ def main() -> None:
     url = sys.argv[1] if len(sys.argv) > 1 else "https://www.linkedin.com/jobs/view/4421164942/"
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
-        kw = {"user_agent": _USER_AGENT}
-        if LINKEDIN_STATE_FILE.exists():
-            kw["storage_state"] = str(LINKEDIN_STATE_FILE)
-        ctx = browser.new_context(**kw)
+        # Guest context on purpose — attaching the real LinkedIn session to an
+        # automated browser gets the account flagged (see scraper.py docstring).
+        ctx = browser.new_context(user_agent=_USER_AGENT)
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         page.wait_for_timeout(3000)

@@ -1,7 +1,13 @@
 """Job-description scraper using Playwright.
 
 Goes to whatever URL is in the sheet's "İlan Linki" (K) column — company career
-sites or LinkedIn. LinkedIn is handled as a special case using a saved login state.
+sites or LinkedIn. LinkedIn pages are read in their public (guest) view.
+
+SECURITY NOTE: do NOT load the user's LinkedIn session (linkedin_state.json) into
+this automated browser. LinkedIn detects its session cookie coming from a headless/
+automated browser, flags the account, and invalidates ALL of the user's sessions
+(constant sign-outs in the real Chrome). LinkedIn serves only the guest view to
+automation anyway, so the cookie gained nothing.
 """
 from __future__ import annotations
 
@@ -11,8 +17,6 @@ from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-
-from .config import LINKEDIN_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -184,10 +188,9 @@ class Scraper:
     def __enter__(self) -> "Scraper":
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=self._headless)
-        ctx_kwargs = {"user_agent": _USER_AGENT}
-        if LINKEDIN_STATE_FILE.exists():
-            ctx_kwargs["storage_state"] = str(LINKEDIN_STATE_FILE)
-        self._context = self._browser.new_context(**ctx_kwargs)
+        # Guest context on purpose — never attach the user's LinkedIn session here
+        # (see the security note in the module docstring).
+        self._context = self._browser.new_context(user_agent=_USER_AGENT)
         return self
 
     def __exit__(self, *exc) -> None:
