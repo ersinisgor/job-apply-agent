@@ -172,6 +172,162 @@
   color: #b42318;
 }
 
+/* Review status block (under the header): banner + mark/unmark toggle. */
+#jobsum-review:empty {
+  display: none;
+}
+
+.jobsum-review {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.jobsum-review--seen {
+  background: #fff8e6;
+}
+
+.jobsum-review-text {
+  font-size: 12px;
+  color: #9a6700;
+  font-weight: 600;
+}
+
+.jobsum-review-btn {
+  background: transparent;
+  border: 1px solid #1a7f37;
+  color: #1a7f37; /* green "mark reviewed" — deliberately not LinkedIn blue */
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jobsum-review-btn:hover {
+  background: #e6f4ea;
+}
+
+.jobsum-review-btn--undo {
+  border-color: #8b949e;
+  color: #57606a; /* neutral gray for the undo action */
+}
+
+.jobsum-review-btn--undo:hover {
+  background: #f3f4f6;
+}
+
+/* Reviewed job cards in the list: dimmed + a small badge. */
+.jobsum-seen {
+  opacity: 0.55;
+  position: relative;
+}
+
+.jobsum-seen-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 5;
+  background: #eef3f8;
+  color: #57606a;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Header actions: the "Liste" button sits next to the close button. */
+#jobsum-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+#jobsum-list {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#jobsum-list:hover,
+#jobsum-list.is-active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Reviewed-jobs list view (shown in the body when "Liste" is active). */
+.jobsum-listhead {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #57606a;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.jobsum-listitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #eaeef2;
+}
+
+.jobsum-listitem:last-child {
+  border-bottom: none;
+}
+
+.jobsum-listitem a {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  min-width: 0;
+  flex: 1;
+}
+
+.jobsum-listitem-title {
+  color: #0a66c2;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobsum-listitem a:hover .jobsum-listitem-title {
+  text-decoration: underline;
+}
+
+.jobsum-listitem-sub {
+  color: #57606a;
+  font-size: 11px;
+}
+
+.jobsum-listitem-remove {
+  background: transparent;
+  border: none;
+  color: #8b949e;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+
+.jobsum-listitem-remove:hover {
+  color: #b42318;
+}
+
 /* Dark theme support (LinkedIn dark mode) */
 @media (prefers-color-scheme: dark) {
   #jobsum-panel {
@@ -216,5 +372,42 @@
   }
   .jobsum-fit--low .jobsum-fit-score {
     color: #f85149;
+  }
+  .jobsum-review {
+    border-bottom-color: #38434f;
+  }
+  .jobsum-review--seen {
+    background: #33290a;
+  }
+  .jobsum-review-text {
+    color: #e3b341;
+  }
+  .jobsum-review-btn {
+    border-color: #3fb950;
+    color: #3fb950;
+  }
+  .jobsum-review-btn:hover {
+    background: #12261a;
+  }
+  .jobsum-review-btn--undo {
+    border-color: #57606a;
+    color: #a9b0b8;
+  }
+  .jobsum-review-btn--undo:hover {
+    background: #29343d;
+  }
+  .jobsum-seen-badge {
+    background: #29343d;
+    color: #a9b0b8;
+  }
+  .jobsum-listitem {
+    border-bottom-color: #38434f;
+  }
+  .jobsum-listitem-title {
+    color: #70b5f9;
+  }
+  .jobsum-listitem-sub,
+  .jobsum-listhead {
+    color: #a9b0b8;
   }
 }

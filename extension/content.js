@@ -71,6 +71,7 @@
   let lastHeader = { title: "Job Summary", company: "" }; // panel header state
   let userClosed = false; // don't reopen if the user closed the panel
   let warnedNoSelectorFor = null; // log the missing-description warning once per job
+  let showingList = false; // panel is showing the reviewed-jobs list instead of a summary
 
   // Per-job summary cache: returning to a job shows it instantly.
   const CACHE = new Map(); // jobId -> { summary, description }
@@ -81,6 +82,95 @@
     if (CACHE.size > CACHE_LIMIT) {
       CACHE.delete(CACHE.keys().next().value); // drop oldest
     }
+  }
+
+  // --- Persistent "reviewed" memory -----------------------------------------
+  // LinkedIn's dismiss (X) state is per-search, so the same posting reappears
+  // un-dismissed in other job-alert lists. We keep our own memory keyed by the
+  // canonical posting id (stable across searches) in chrome.storage.local, and
+  // warn when a reviewed posting shows up again.
+
+  const STORE_KEY = "jobsum_reviewed";
+  const REVIEWED_LIMIT = 3000; // cap; prune oldest by timestamp on write
+  let reviewedMap = {}; // jobId -> { t, title, company, fit }
+
+  function loadReviewed() {
+    try {
+      chrome.storage.local.get(STORE_KEY, (res) => {
+        if (chrome.runtime.lastError) return;
+        reviewedMap = res && res[STORE_KEY] ? res[STORE_KEY] : {};
+        scheduleUpdate(); // reflect loaded state in the list/panel
+      });
+    } catch (_) {
+      /* storage unavailable; feature just stays inert */
+    }
+  }
+
+  // Keep in sync if another tab changes the store.
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes[STORE_KEY]) {
+        reviewedMap = changes[STORE_KEY].newValue || {};
+        scheduleUpdate();
+      }
+    });
+  } catch (_) {
+    /* ignore */
+  }
+
+  function persistReviewed() {
+    // Prune to the newest REVIEWED_LIMIT entries by timestamp.
+    const ids = Object.keys(reviewedMap);
+    if (ids.length > REVIEWED_LIMIT) {
+      ids
+        .sort((a, b) => (reviewedMap[a].t || 0) - (reviewedMap[b].t || 0))
+        .slice(0, ids.length - REVIEWED_LIMIT)
+        .forEach((id) => delete reviewedMap[id]);
+    }
+    try {
+      chrome.storage.local.set({ [STORE_KEY]: reviewedMap });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function isReviewed(jobId) {
+    return !!(jobId && reviewedMap[jobId]);
+  }
+
+  function markReviewed(jobId, meta) {
+    if (!jobId) return;
+    const existing = reviewedMap[jobId];
+    reviewedMap[jobId] = {
+      t: existing && existing.t ? existing.t : Date.now(), // keep first-seen time
+      title: (meta && meta.title) || (existing && existing.title) || "",
+      company: (meta && meta.company) || (existing && existing.company) || "",
+      fit: meta && meta.fit != null ? meta.fit : existing ? existing.fit : null,
+    };
+    persistReviewed();
+    console.log(LOG, "marked reviewed:", jobId);
+    scheduleUpdate();
+  }
+
+  function unmarkReviewed(jobId) {
+    if (!jobId || !reviewedMap[jobId]) return;
+    delete reviewedMap[jobId];
+    persistReviewed();
+    console.log(LOG, "unmarked:", jobId);
+    scheduleUpdate();
+  }
+
+  // Turkish relative time for "you saw this N ago".
+  function relativeTime(t) {
+    const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+    if (mins < 1) return "az önce";
+    if (mins < 60) return `${mins} dk önce`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} saat önce`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days} gün önce`;
+    const weeks = Math.floor(days / 7);
+    return `${weeks} hafta önce`;
   }
 
   // --- Helpers ---
@@ -200,6 +290,55 @@
     return null;
   }
 
+  function cardJobId(el) {
+    const card = el.closest("[data-job-id], [data-occludable-job-id]");
+    if (!card) return null;
+    return (
+      card.getAttribute("data-job-id") ||
+      card.getAttribute("data-occludable-job-id")
+    );
+  }
+
+  // Best-effort title/company from a job card's own text (first two lines).
+  function cardMeta(el) {
+    const card = el.closest("[data-job-id], [data-occludable-job-id]");
+    if (!card) return {};
+    const lines = (card.innerText || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    return { title: lines[0] || "", company: lines[1] || "" };
+  }
+
+  // Detect clicks on LinkedIn's own dismiss (X) / undo (↩️) buttons. aria-label
+  // is LinkedIn's most stable signal (the CSS classes are hashed). The panel
+  // toggle is the reliable fallback if these patterns miss a locale.
+  const DISMISS_RE = /dismiss|yoksay|gizle|kapat|not interested|ilgilenmiyorum/i;
+  const UNDO_RE = /undo|geri al|geri getir/i;
+  const warnedLabels = new Set(); // distinct unmatched aria-labels, capped
+
+  function onDocClick(event) {
+    const btn = event.target.closest("button");
+    if (!btn) return;
+    const jobId = cardJobId(btn);
+    if (!jobId) return; // not a button inside a job card
+    const label = (btn.getAttribute("aria-label") || btn.title || "").trim();
+    if (UNDO_RE.test(label)) {
+      unmarkReviewed(jobId);
+    } else if (DISMISS_RE.test(label)) {
+      markReviewed(jobId, { ...cardMeta(btn), fit: cachedFit(jobId) });
+    } else if (label && warnedLabels.size < 8 && !warnedLabels.has(label)) {
+      // Help tune DISMISS_RE/UNDO_RE for the user's locale during verification.
+      warnedLabels.add(label);
+      console.warn(LOG, "card button click, unmatched aria-label:", label);
+    }
+  }
+
+  function cachedFit(jobId) {
+    const c = CACHE.get(jobId);
+    return c && c.summary ? c.summary.fit_score : null;
+  }
+
   // --- Panel: appended under <html>, re-created if removed ---
 
   function buildPanel() {
@@ -211,15 +350,131 @@
           <span id="jobsum-title">${escapeHtml(lastHeader.title)}</span>
           <span id="jobsum-company">${escapeHtml(lastHeader.company)}</span>
         </div>
-        <button id="jobsum-close" title="Close" aria-label="Close">×</button>
+        <div id="jobsum-actions">
+          <button id="jobsum-list" type="button" title="İşaretli ilanlar" aria-label="İşaretli ilanlar">Liste</button>
+          <button id="jobsum-close" title="Close" aria-label="Close">×</button>
+        </div>
       </div>
+      <div id="jobsum-review"></div>
       <div id="jobsum-body">${lastBodyHtml}</div>
     `;
     panel.querySelector("#jobsum-close").addEventListener("click", () => {
       userClosed = true;
       panel.remove();
     });
+    panel.querySelector("#jobsum-list").addEventListener("click", toggleList);
+    panel.querySelector("#jobsum-list").classList.toggle("is-active", showingList);
     return panel;
+  }
+
+  // --- Reviewed-jobs list view ----------------------------------------------
+  // A permanent "Liste" button in the header toggles a list of every reviewed
+  // posting (title/company/when) with a link to LinkedIn's canonical job URL —
+  // useful when a marked job can no longer be found via search.
+
+  function reviewedJobUrl(jobId) {
+    return `https://www.linkedin.com/jobs/view/${encodeURIComponent(jobId)}/`;
+  }
+
+  function renderReviewedList() {
+    const entries = Object.entries(reviewedMap).sort(
+      (a, b) => (b[1].t || 0) - (a[1].t || 0)
+    );
+    if (!entries.length) {
+      return `<div class="jobsum-status">Henüz işaretli ilan yok.</div>`;
+    }
+    const items = entries
+      .map(([id, v]) => {
+        const title = escapeHtml(v.title || `İlan ${id}`);
+        const company = escapeHtml(v.company || "");
+        const when = v.t ? escapeHtml(relativeTime(v.t)) : "";
+        const sub = [company, when].filter(Boolean).join(" · ");
+        return `
+        <div class="jobsum-listitem">
+          <a href="${reviewedJobUrl(id)}" target="_blank" rel="noopener">
+            <span class="jobsum-listitem-title">${title}</span>
+            <span class="jobsum-listitem-sub">${sub}</span>
+          </a>
+          <button class="jobsum-listitem-remove" type="button" data-jid="${escapeHtml(
+            id
+          )}" title="Kaldır" aria-label="Kaldır">×</button>
+        </div>`;
+      })
+      .join("");
+    return `<div class="jobsum-listhead">İşaretli ilanlar (${entries.length})</div>${items}`;
+  }
+
+  function attachListHandlers() {
+    const panel = document.getElementById("jobsum-panel");
+    if (!panel) return;
+    panel.querySelectorAll(".jobsum-listitem-remove").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        unmarkReviewed(btn.getAttribute("data-jid"));
+        if (showingList) {
+          setBody(renderReviewedList()); // refresh the list in place
+          attachListHandlers();
+        }
+      });
+    });
+  }
+
+  function toggleList() {
+    showingList = !showingList;
+    const btn = document.getElementById("jobsum-list");
+    if (btn) btn.classList.toggle("is-active", showingList);
+    if (showingList) {
+      setBody(renderReviewedList());
+      attachListHandlers();
+    } else {
+      // Return to the summary view: force a re-render of the current job.
+      reviewRenderKey = null;
+      lastJobId = null;
+      scheduleUpdate();
+    }
+  }
+
+  // Review status block (under the header): warning banner + mark/unmark toggle
+  // for the current job. Re-rendered only when the (job, reviewed) state changes.
+  let reviewRenderKey = null;
+  function renderReviewStatus(jobId) {
+    const panel = ensurePanel();
+    if (!panel) return;
+    const slot = panel.querySelector("#jobsum-review");
+    if (!slot) return;
+
+    const key = `${jobId || ""}:${isReviewed(jobId)}`;
+    if (key === reviewRenderKey) return; // nothing changed
+    reviewRenderKey = key;
+
+    if (!jobId) {
+      slot.innerHTML = "";
+      return;
+    }
+
+    if (isReviewed(jobId)) {
+      const when = relativeTime(reviewedMap[jobId].t || Date.now());
+      slot.className = "jobsum-review jobsum-review--seen";
+      slot.innerHTML = `
+        <span class="jobsum-review-text">⚠ Bu ilanı ${escapeHtml(when)} gördün</span>
+        <button class="jobsum-review-btn jobsum-review-btn--undo" type="button">Geri al</button>`;
+      slot.querySelector("button").addEventListener("click", () => {
+        unmarkReviewed(jobId);
+      });
+    } else {
+      slot.className = "jobsum-review";
+      slot.innerHTML = `
+        <button class="jobsum-review-btn" type="button">İncelendi</button>`;
+      slot.querySelector("button").addEventListener("click", () => {
+        const c = CACHE.get(jobId);
+        markReviewed(jobId, {
+          title: (c && c.summary && c.summary.job_title) || lastHeader.title || "",
+          company: (c && c.summary && c.summary.company) || lastHeader.company || "",
+          fit: cachedFit(jobId),
+        });
+      });
+    }
   }
 
   // Header: position title on top, company underneath (like LinkedIn's top card).
@@ -242,6 +497,7 @@
       panel = buildPanel();
       document.documentElement.appendChild(panel);
       console.log(LOG, "panel added");
+      if (showingList) attachListHandlers(); // re-wire list after a rebuild
     }
     return panel;
   }
@@ -254,14 +510,17 @@
   }
 
   function showLoading() {
+    if (showingList) return; // don't clobber the list view
     setBody(`<div class="jobsum-status">Preparing summary…</div>`);
   }
 
   function showError(message) {
+    if (showingList) return;
     setBody(`<div class="jobsum-status jobsum-error">${escapeHtml(message)}</div>`);
   }
 
   function renderSummary(data) {
+    if (showingList) return;
     // Prefer what Claude extracted from the posting; fall back to the DOM
     // selectors (which only match LinkedIn's old UI).
     setHeader(
@@ -372,10 +631,44 @@
       });
   }
 
+  // Dim reviewed job cards in the list and add a "görüldü" badge. Re-applied
+  // every tick because LinkedIn virtualizes the list (cards mount/unmount).
+  function markSeenCards() {
+    const cards = document.querySelectorAll(
+      "[data-job-id], [data-occludable-job-id]"
+    );
+    cards.forEach((card) => {
+      if (card.closest("#jobsum-panel")) return; // never touch our own panel
+      // Skip the big right-hand details pane (long text); only mark list cards.
+      if ((card.innerText || "").length > 800) return;
+      const id =
+        card.getAttribute("data-job-id") ||
+        card.getAttribute("data-occludable-job-id");
+      if (!id) return;
+      const seen = isReviewed(id);
+      const marked = card.classList.contains("jobsum-seen");
+      if (seen && !marked) {
+        card.classList.add("jobsum-seen");
+        if (!card.querySelector(":scope > .jobsum-seen-badge")) {
+          const badge = document.createElement("span");
+          badge.className = "jobsum-seen-badge";
+          badge.textContent = "görüldü";
+          card.appendChild(badge);
+        }
+      } else if (!seen && marked) {
+        card.classList.remove("jobsum-seen");
+        const b = card.querySelector(":scope > .jobsum-seen-badge");
+        if (b) b.remove();
+      }
+    });
+  }
+
   function maybeUpdate() {
     ensurePanel(); // re-add the panel if it was removed
+    markSeenCards(); // reflect reviewed state in the list
 
     const jobId = getCurrentJobId();
+    renderReviewStatus(jobId); // update the panel banner/toggle for this job
     if (!jobId) return;
 
     // Switched to a new job: give instant feedback first.
@@ -446,6 +739,10 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
   setInterval(maybeUpdate, 700);
 
+  // Capture dismiss/undo clicks anywhere on the page.
+  document.addEventListener("click", onDocClick, true);
+
+  loadReviewed(); // load persisted "reviewed" memory, then reflect it
   ensurePanel();
   scheduleUpdate();
 })();
