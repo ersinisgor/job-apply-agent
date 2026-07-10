@@ -3,6 +3,7 @@ Backend Developer focused on building scalable REST APIs and backend systems usi
 
 ### CORE SKILLS
 **Backend:** Node.js, NestJS, Express, TypeScript, C#, .NET Core <br>
+**Frontend:** React, Next.js, JavaScript, HTML, CSS, Tailwind CSS <br>
 **API Development:** RESTful APIs, JWT Authentication, RBAC, Swagger, Postman <br>
 **Databases:** PostgreSQL, MongoDB, Supabase, SQL Server, TypeORM, Prisma, EF Core <br>
 **Architecture:** Clean Architecture, CQRS, Repository Pattern, Microservices Architecture (fundamentals) <br>

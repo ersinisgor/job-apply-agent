@@ -456,15 +456,15 @@
     panel.id = "jobsum-panel";
     panel.innerHTML = `
       <div id="jobsum-header">
-        <div id="jobsum-heading">
-          <span id="jobsum-title">${escapeHtml(lastHeader.title)}</span>
-          <span id="jobsum-company">${escapeHtml(lastHeader.company)}</span>
-        </div>
         <div id="jobsum-actions">
           <button id="jobsum-refresh" type="button" title="Özeti yeniden oluştur" aria-label="Özeti yeniden oluştur">Yenile</button>
           <button id="jobsum-list" type="button" title="İncelenen ilanlar" aria-label="İncelenen ilanlar">Liste</button>
           <button id="jobsum-maybe-list" type="button" title="Olabilir listesi" aria-label="Olabilir listesi">Olabilir</button>
           <button id="jobsum-close" title="Close" aria-label="Close">×</button>
+        </div>
+        <div id="jobsum-heading">
+          <span id="jobsum-title">${escapeHtml(lastHeader.title)}</span>
+          <span id="jobsum-company">${escapeHtml(lastHeader.company)}</span>
         </div>
       </div>
       <div id="jobsum-review"></div>
@@ -687,7 +687,10 @@
       data.work_type && data.work_type !== "unspecified" ? data.work_type : "";
     data = { ...data, work: [workType, data.work_type_note].filter(Boolean).join(" — ") };
     const rows = FIELDS.map((field) => {
-      const rendered = renderValue(data[field.key]);
+      const rendered =
+        field.key === "stack"
+          ? renderStack(data.stack, data.stack_known)
+          : renderValue(data[field.key]);
       if (rendered === null) return "";
       return `
         <div class="jobsum-row">
@@ -717,6 +720,52 @@
           ${reasonHtml}
         </div>
       </div>`;
+  }
+
+  // Stack: a chip per technology — green when the candidate knows it, red when they
+  // don't (`stack_known`, computed by the backend against the CV + past projects).
+  //
+  // A group with several options is a choice the posting itself offers ("React, Next.js
+  // veya benzeri"); it gets its own row, labelled "veya". Everything else is a plain
+  // requirement, and those all share one row that simply wraps at the panel's width —
+  // one row each would waste most of the panel.
+  function renderStack(groups, known) {
+    if (!Array.isArray(groups) || groups.length === 0) return null;
+
+    const chip = (option, flag) => {
+      // No flag at all (no candidate profile on the backend): stay neutral rather
+      // than paint every requirement red.
+      const state = typeof flag === "boolean" ? (flag ? "known" : "missing") : "";
+      const cls = state ? ` jobsum-chip--${state}` : "";
+      return `<span class="jobsum-chip${cls}">${escapeHtml(String(option))}</span>`;
+    };
+
+    const altRows = [];
+    const required = [];
+    groups.forEach((group, gi) => {
+      const options = (Array.isArray(group) ? group : [group]).filter(Boolean);
+      if (options.length === 0) return;
+      const flags = (Array.isArray(known) && known[gi]) || [];
+      if (options.length === 1) {
+        required.push(chip(options[0], flags[0]));
+        return;
+      }
+      const chips = options.map((option, oi) => chip(option, flags[oi])).join("");
+      altRows.push(
+        `<div class="jobsum-stack-row jobsum-stack-row--alt">` +
+          `<span class="jobsum-stack-alt">veya</span>` +
+          `<div class="jobsum-stack-chips">${chips}</div></div>`
+      );
+    });
+
+    if (required.length) {
+      altRows.push(
+        `<div class="jobsum-stack-row"><div class="jobsum-stack-chips">${required.join(
+          ""
+        )}</div></div>`
+      );
+    }
+    return altRows.join("") || null;
   }
 
   function renderValue(value) {

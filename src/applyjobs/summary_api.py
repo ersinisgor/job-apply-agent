@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import OrderedDict
 from functools import lru_cache
 
@@ -60,9 +61,22 @@ SYSTEM_PROMPT = (
     "posting itself; take 'job_title' and 'company' from the posting.\n"
     "- 'role_summary': one or two short sentences — what the candidate will build/do "
     "and the key context that matters. No company history, no boilerplate.\n"
-    "- 'stack': the REQUIRED technologies only, max 6 items, most important first — "
-    "primary programming language(s) first (join alternatives like '.NET / Node.js / "
-    "Scala' into one item), then key frameworks/tools. Skip nice-to-haves.\n"
+    "- 'stack': the REQUIRED technologies only, max 10 GROUPS, most important first "
+    "(languages before frameworks/tools). Skip nice-to-haves. A group is an ARRAY, and "
+    "it holds MORE THAN ONE option only when the posting itself offers a CHOICE between "
+    "them ('or', 'veya', 'ya da', 'or similar', 'en az birinde'). MOST REQUIREMENTS ARE "
+    "NOT A CHOICE — default to one-element groups:\n"
+    "  * a technology required on its own is a one-element group: [\"Docker\"]\n"
+    "  * 'Proficient in one or more back end languages — Python, Go, Java, Node.js, "
+    "Rust, or similar' is ONE group: [\"Python\", \"Go\", \"Java\", \"Node.js\", \"Rust\"]\n"
+    "  * when the posting couples a language with its framework, keep the pair inside a "
+    "single option string, so 'Java/Spring Boot or C#/.NET Core' is ONE group: "
+    "[\"Java / Spring Boot\", \"C# / .NET Core\"]\n"
+    "  * 'HTML, CSS ve JavaScript konusunda güçlü deneyim' offers no choice — it is "
+    "THREE one-element groups: [\"HTML\"], [\"CSS\"], [\"JavaScript\"]\n"
+    "  Never merge unrelated required technologies into one group: Docker and "
+    "PostgreSQL, both mandatory, are two separate one-element groups.\n"
+    "- 'stack_known': always []. The server fills it.\n"
     "- 'work_type': distinguish remote/hybrid/on-site; put any city/country/timezone "
     "condition in 'work_type_note' (a few words, e.g. 'İstanbul tercihli').\n"
     "- 'min_experience': a few words (e.g. '3+ yıl'); 'visa_sponsorship': only if the "
@@ -72,14 +86,26 @@ SYSTEM_PROMPT = (
     "The candidate KNOWS every technology named ANYWHERE in the profile — both the CV "
     "and the PAST PROJECTS — so a required technology counts as MET if it appears in "
     "either (e.g. Next.js used in a past project counts even if the CV omits it). "
+    "A multi-option 'stack' group is a choice, so it counts as fully MET as soon as the "
+    "candidate knows ANY ONE of its options. "
     "IGNORE experience and seniority ENTIRELY: do NOT lower the score for a senior/lead "
     "title or a years-of-experience requirement, and do NOT raise it for a junior one — "
     "the years asked for and the candidate's years must not affect the number at all. "
     "Bands: 70-100 strong (stack overlaps well), 40-69 partial (some overlap), 1-39 weak "
     "(little overlap). If no candidate profile is given, use 0.\n"
-    "- 'fit_reason': ONE very short Turkish clause explaining the score from STACK "
-    "overlap only (e.g. 'Node/TS güçlü ama .NET ağırlıklı'); never mention experience "
-    "level. Empty when fit_score is 0."
+    "- 'fit_reason': ONE very short Turkish clause about STACK overlap only; never "
+    "mention experience or seniority. Before writing it, walk the 'stack' items ONE BY "
+    "ONE and search the whole CANDIDATE PROFILE (CV *and* past projects) for each: an "
+    "item is MISSING only if it appears NOWHERE there. Never call an item missing when "
+    "the profile names it — the profile's skill lists and project tech lists count.\n"
+    "  * fit_score 70+: name the required technologies that match, then any missing one "
+    "(e.g. 'Node.js, NestJS ve TypeScript uyumlu; AWS deneyimi yok.').\n"
+    "  * fit_score below 70: write a SINGLE clause naming the MISSING technologies and "
+    "nothing else — no ';', no second clause, no word about what the candidate does know "
+    "or what their stack is built on. Examples of the ONLY acceptable shape: 'Java, "
+    "Spring Boot, Kafka, Redis ve Kubernetes deneyimi yok.' / 'Python ve Django/FastAPI "
+    "eksik.'\n"
+    "  * fit_score 0: empty."
 )
 
 
@@ -96,6 +122,85 @@ def _profile_block() -> str:
     if not parts:
         return ""
     return "\n\nCANDIDATE PROFILE (score fit_score against this):\n" + "\n\n".join(parts)
+
+
+# The panel paints the score green at 70+, yellow at 40-69 and red below that
+# (renderFit in extension/content.js). Outside the green band the reason must name the
+# GAPS ONLY, and that clause is computed here rather than taken from the model: the
+# model extracts 'stack' reliably but is not reliable at diffing it against the profile
+# (it called PostgreSQL missing while both the CV and several projects list it).
+_FIT_GREEN_MIN = 70
+
+_PROFILE_HAYSTACK = "\n".join(p for p in (_CV_TEXT, _PROJECTS_TEXT) if p).lower()
+
+
+def _profile_mentions(tech: str) -> bool:
+    """True when `tech` is named anywhere in the profile (CV or past projects)."""
+    tech = tech.strip().lower()
+    if not tech:
+        return False
+    # Bounded on both sides so 'Go' misses 'Django' and 'Java' misses 'JavaScript',
+    # while '.NET', 'Node.js' and 'C#' still match themselves.
+    pattern = rf"(?<![a-z0-9.#+]){re.escape(tech)}(?![a-z0-9#+])"
+    return re.search(pattern, _PROFILE_HAYSTACK) is not None
+
+
+def _option_known(option: str) -> bool:
+    """True when the candidate knows a stack option.
+
+    An option may couple a language with its framework ('Java / Spring Boot'); the
+    posting wants both, so every part has to be in the profile. (Alternatives are a
+    separate level: they are the sibling options of the same stack group.)
+    """
+    parts = [part.strip() for part in option.split("/") if part.strip()]
+    return bool(parts) and all(_profile_mentions(part) for part in parts)
+
+
+def _stack_known(stack: list[list[str]]) -> list[list[bool]]:
+    """Per-option 'is it in the profile?' flags — the panel paints these green/red."""
+    return [[_option_known(option) for option in group] for group in stack]
+
+
+def _missing_stack(stack: list[list[str]]) -> list[str]:
+    """The required groups absent from the profile.
+
+    A group lists interchangeable options ('Python' or 'Go' or 'Rust'), so it counts as
+    met as soon as the candidate knows ANY one of them.
+    """
+    missing: list[str] = []
+    for group in stack:
+        if group and not any(_option_known(option) for option in group):
+            missing.append(" veya ".join(option.strip() for option in group))
+    return missing
+
+
+def _gap_only_reason(stack: list[list[str]]) -> str:
+    """'Java, Spring Boot ve Kafka deneyimi yok.' — a Turkish list of gaps alone."""
+    missing = _missing_stack(stack)
+    if not missing:
+        return ""
+    listed = (
+        missing[0]
+        if len(missing) == 1
+        else ", ".join(missing[:-1]) + " ve " + missing[-1]
+    )
+    return f"{listed} deneyimi yok."
+
+
+def _annotate_stack(summary: JobSummary) -> None:
+    """Fill `stack_known`, and below the green band rewrite `fit_reason` as gaps only.
+
+    The reason is left to the model when nothing is missing (it then explains the score
+    some other way) or when no profile is loaded (fit_score is 0 anyway).
+    """
+    if not _PROFILE_HAYSTACK:
+        return
+    summary.stack_known = _stack_known(summary.stack)
+    if not 0 < summary.fit_score < _FIT_GREEN_MIN:
+        return
+    reason = _gap_only_reason(summary.stack)
+    if reason:
+        summary.fit_reason = reason
 
 
 class MissingCredentialsError(RuntimeError):
@@ -171,7 +276,7 @@ _SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
 _CACHE_MAX = 1000
 # Bump whenever the scoring rubric (SYSTEM_PROMPT) or JobSummary schema changes, so a
 # stale on-disk cache from the old rules is discarded instead of returning old scores.
-_CACHE_VERSION = 3
+_CACHE_VERSION = 7
 
 
 def _load_cache() -> None:
@@ -269,6 +374,7 @@ def summarize(req: SummarizeRequest) -> JobSummary:
         text = "".join(b.text for b in response.content if b.type == "text")
         try:
             summary = JobSummary.model_validate_json(_extract_json(text))
+            _annotate_stack(summary)
             _cache_put(req.job_id, summary)
             return summary
         except Exception as exc:  # noqa: BLE001 - malformed JSON: retry once

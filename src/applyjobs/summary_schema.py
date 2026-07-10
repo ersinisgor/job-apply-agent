@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class WorkType(str, Enum):
@@ -53,15 +53,32 @@ class JobSummary(BaseModel):
     visa_sponsorship: str = Field(
         default="", description="Very short Turkish visa/sponsorship note; usually empty."
     )
-    stack: list[str] = Field(
+    stack: list[list[str]] = Field(
         default_factory=list,
-        description="Required technologies, max 6, most important first.",
+        description="Required tech, max 6 groups; an inner list holds 'or' alternatives.",
     )
+    stack_known: list[list[bool]] = Field(
+        default_factory=list,
+        description="Server-filled: is each stack option in the candidate profile?",
+    )
+
+    @field_validator("stack", mode="before")
+    @classmethod
+    def _wrap_bare_options(cls, value: object) -> object:
+        """Tolerate a flat ['Docker', 'Redis'] from the model: each item is its own group.
+
+        The prompt asks for a list of alternative-groups, but a plain string slips
+        through often enough that rejecting it would burn the single JSON retry.
+        """
+        if isinstance(value, list):
+            return [[item] if isinstance(item, str) else item for item in value]
+        return value
     fit_score: int = Field(
         default=0, description="0-100 fit vs the candidate profile; 0 if unknown."
     )
     fit_reason: str = Field(
-        default="", description="One very short Turkish clause: why it fits or not."
+        default="",
+        description="One very short Turkish clause: matches if 70+, else only the gaps.",
     )
     min_experience: str = Field(
         default="", description="Minimum experience, very short Turkish, e.g. '3+ yıl'."

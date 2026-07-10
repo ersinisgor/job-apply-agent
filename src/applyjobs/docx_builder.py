@@ -243,6 +243,43 @@ def _fill_bullets(bullet_paras: list, new_bullets: list[str]) -> None:
         _set_bullet_text(Paragraph(el, parent), text)
 
 
+def _fill_core_skills(skill_paras: list, lines: list[str]) -> None:
+    """Fill the 'Label: content' skill paragraphs, one per markdown line.
+
+    The template ships a fixed set of slots, but the CV may legitimately carry a
+    different number of skill lines (the Frontend line is dropped for a pure back-end
+    posting), so grow/shrink the slots like the bullet lists do. The bold LABEL is taken
+    from the markdown too: filling only the content would silently shift every line
+    under the template's original label once a line is added or removed.
+    """
+    if not skill_paras or not lines:
+        return
+
+    from docx.text.paragraph import Paragraph
+
+    parent = skill_paras[0]._parent
+    elems = [p._p for p in skill_paras]
+
+    while len(elems) < len(lines):
+        new_el = copy.deepcopy(elems[-1])
+        elems[-1].addnext(new_el)
+        elems.append(new_el)
+    while len(elems) > len(lines):
+        _remove(elems.pop())
+
+    for el, line in zip(elems, lines):
+        p = Paragraph(el, parent)
+        nodes = _t_nodes(p)
+        if not nodes:
+            continue
+        label, sep, content = line.partition(":")
+        if not sep:  # no label on this line: drop it all into the content node
+            _replace_content(p, line.strip(), keep_prefix_nodes=0)
+            continue
+        _set_node(nodes[0], f"{label.strip()}:")
+        _replace_content(p, content.strip(), keep_prefix_nodes=1)
+
+
 def build_docx(markdown_cv: str) -> bytes:
     """Return a .docx (bytes) = template filled with the job-tailored CV content."""
     data = parse_markdown_cv(markdown_cv)
@@ -256,18 +293,15 @@ def build_docx(markdown_cv: str) -> bytes:
             _replace_content(p, data["summary"], keep_prefix_nodes=0)
             break
 
-    # --- CORE SKILLS: 6 'Label: content' lines (keep bold label node) ---
+    # --- CORE SKILLS: one 'Label: content' line per markdown skill line ---
     cs_start = _find_header(paras, "CORE SKILLS")
     exp_start = _find_header(paras, "EXPERIENCE")
-    skill_idx = 0
-    for p in paras[cs_start + 1: exp_start]:
-        if not _para_text(p).strip():
-            continue
-        if skill_idx < len(data["core_skills"]):
-            content = data["core_skills"][skill_idx].split(":", 1)
-            new_content = content[1].strip() if len(content) > 1 else content[0]
-            _replace_content(p, new_content, keep_prefix_nodes=1)
-            skill_idx += 1
+    skill_paras = [p for p in paras[cs_start + 1: exp_start] if _para_text(p).strip()]
+    _fill_core_skills(skill_paras, data["core_skills"])
+
+    # Slots may have been added/removed above, so re-read the paragraph list.
+    paras = doc.paragraphs
+    exp_start = _find_header(paras, "EXPERIENCE")
 
     # --- EXPERIENCE: only the "Intern" entry's bullets are editable ---
     proj_start = _find_header(paras, "SELECTED PROJECTS")

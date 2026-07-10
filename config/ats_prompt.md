@@ -481,6 +481,10 @@ The content between `<CV_START>` and `<CV_END>` will be saved directly as the ca
   `Tech:` lines, the `*` bullet style, the `Tech:` lines, and blank lines — all exactly as in the original.
 - DO NOT add anything that is not in the original structure: no name/contact header, no email/phone/
   links line, no horizontal rules (`---`), no extra sections, no emojis, no closing notes.
+- CORE SKILLS is the ONE place where a line may be dropped. Keep the **Frontend:** line whenever the
+  posting touches the front end at all — a full-stack or front-end role, or any posting naming React,
+  Next.js, HTML, CSS or JavaScript. Omit that single line ONLY for a pure back-end posting. Never
+  invent a new label and never drop any other line.
 - DO NOT change heading levels (do not turn `###` into `##` or `#`), and do not re-style headings.
 - Only the WORDING inside sections may change (inserted keywords in **bold** per STEP 10, reordered
   skills, optimized bullets, swapped projects per STEP 8). The skeleton stays identical.

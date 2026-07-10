@@ -25,11 +25,12 @@
   display: none;
 }
 
+/* Action buttons on their own top row; the heading below gets the full width. */
 #jobsum-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 10px 14px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 8px 14px 10px;
   background: #0a66c2; /* LinkedIn blue */
   color: #ffffff;
   flex: 0 0 auto;
@@ -39,6 +40,7 @@
 #jobsum-heading {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-width: 0; /* allow text truncation inside flex */
 }
 
@@ -65,6 +67,7 @@
 }
 
 #jobsum-close {
+  margin-left: auto; /* the other buttons sit left; only "×" hugs the corner */
   background: transparent;
   border: none;
   color: #ffffff;
@@ -123,6 +126,49 @@
   padding: 2px 9px;
   margin: 2px 3px 2px 0;
   font-size: 12px;
+}
+
+/* Stack rows. A "veya" row lists options the posting accepts interchangeably; the last
+   row holds the plain requirements, wrapping at the panel's width. The "veya" label is
+   a fixed column so a wrapped option lines up under its siblings instead of looking
+   like a separate requirement. Green = the candidate has it, red = missing. */
+.jobsum-stack-row {
+  display: flex;
+  align-items: baseline;
+}
+
+/* A faint grey band ties the "veya" label and its interchangeable options together into
+   one visible unit. Deliberately neutral: the chips inside carry the only colour that
+   means anything (green = known, red = missing), and a tinted band muddied them. */
+.jobsum-stack-row--alt {
+  background: #f4f6f7;
+  border-radius: 8px;
+  padding: 2px 6px;
+  margin: 3px 0;
+}
+
+.jobsum-stack-chips {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.jobsum-stack-alt {
+  flex: 0 0 34px;
+  color: #57606a;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.jobsum-chip--known {
+  background: #dafbe1;
+  color: #116329;
+}
+
+.jobsum-chip--missing {
+  background: #ffebe9;
+  color: #a40e26;
 }
 
 /* Fit badge: prominent top block, color-banded by score. */
@@ -291,6 +337,7 @@
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+  margin-bottom: 6px;
 }
 
 #jobsum-list,
@@ -397,6 +444,20 @@
   .jobsum-chip {
     background: #29343d;
     color: #70b5f9;
+  }
+  .jobsum-stack-row--alt {
+    background: #262c33;
+  }
+  .jobsum-stack-alt {
+    color: #a9b0b8;
+  }
+  .jobsum-chip--known {
+    background: #1b4721;
+    color: #7ee787;
+  }
+  .jobsum-chip--missing {
+    background: #4b2224;
+    color: #ff9492;
   }
   .jobsum-fit {
     border-bottom-color: #38434f;
