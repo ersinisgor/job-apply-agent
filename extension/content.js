@@ -15,6 +15,9 @@
   // used to fix selectors against LinkedIn's hashed-class UI. Off by default so the
   // console stays quiet during normal use.
   const DEBUG = false;
+  // How long to wait for a job's description to appear in the DOM before giving up and
+  // showing a retry hint, instead of spinning forever on a layout we can't read.
+  const DESC_LOAD_TIMEOUT_MS = 12000;
   console.log(LOG, "content script loaded:", location.href);
 
   // --- LinkedIn DOM selectors (brittle; tried in order, first match wins) ---
@@ -70,6 +73,7 @@
   let lastJobId = null; // most recently shown job id
   let seenOnlyShownFor = null; // job whose "dismissed, never summarized" body is up
   let pendingJobId = null; // job waiting for its description to load
+  let pendingSince = 0; // when the pending job started waiting (for the load timeout)
   let lastShownDescription = ""; // description of the shown job (stale guard)
   let requestSeq = 0; // request sequence to avoid race conditions
   let lastBodyHtml = `<div class="jobsum-status">Ready — click a job on the left.</div>`;
@@ -304,6 +308,10 @@
         const len = node.textContent.trim().length;
         if (len <= bestLen) continue;
         if (parent.closest("#jobsum-panel,code,script,style,noscript,template")) continue;
+        // A LIST card is never the description — skip it, or the longest text on a
+        // search-results page becomes some other job's card title and the heuristic
+        // climbs into the wrong posting.
+        if (parent.closest(LIST_CARD_SELECTOR)) continue;
         if (parent.checkVisibility && !parent.checkVisibility()) continue;
         best = parent;
         bestLen = len;
@@ -314,7 +322,10 @@
 
   function heuristicDescription() {
     const { el: start, len } = findLongestVisibleTextEl();
-    if (!start || len < 150) return ""; // no paragraph-sized visible text yet
+    // Low seed threshold: the new UI splits the description into many short lines, so
+    // its longest single node can be under a sentence. The 300-char floor on the
+    // assembled container below is what actually guards against grabbing junk.
+    if (!start || len < 50) return "";
     let el = start;
     while (el.parentElement && el.parentElement !== document.body) {
       const parentLen = (el.parentElement.innerText || "").trim().length;
@@ -326,9 +337,10 @@
   }
 
   // Log the DOM around the longest visible text so failing selectors can be
-  // fixed from a pasted console dump (one shot per job).
+  // fixed from a pasted console dump. Gated behind DEBUG for the routine per-job
+  // path; the description-timeout path calls it unconditionally (a stuck panel is a
+  // real failure worth one diagnostic, not opt-in noise).
   function logDomDiagnosis() {
-    if (!DEBUG) return; // DIAG output is opt-in via the DEBUG flag
     const { el: best, len } = findLongestVisibleTextEl();
     if (!best) {
       console.warn(LOG, "DIAG: no visible text node found at all");
@@ -413,6 +425,11 @@
   // link inside the card — but it does carry componentkey="job-card-component-ref-<id>".
   const CARD_SELECTOR =
     '[data-job-id], [data-occludable-job-id], [componentkey^="job-card-component-ref-"]';
+  // The subset that is ALWAYS a left-list card. Excludes data-job-id on purpose: the
+  // right-hand details pane can carry it, and the description heuristic must not treat
+  // that pane as a list card to skip.
+  const LIST_CARD_SELECTOR =
+    '[data-occludable-job-id], [componentkey^="job-card-component-ref-"]';
   const JOB_LINK = 'a[href*="/jobs/view/"]';
 
   // The job card that owns a clicked control. Walks the composed path, which crosses
@@ -738,7 +755,12 @@
 
   function showLoading() {
     if (showingList) return; // don't clobber the list view
-    setBody(`<div class="jobsum-status">Preparing summary…</div>`);
+    setBody(
+      `<div class="jobsum-loading">
+         <span class="jobsum-spinner" aria-hidden="true"></span>
+         <span>Özet hazırlanıyor…</span>
+       </div>`
+    );
   }
 
   function showError(message) {
@@ -1052,6 +1074,7 @@
       }
       console.log(LOG, "new job detected:", jobId);
       pendingJobId = jobId;
+      pendingSince = Date.now();
       setHeader("", ""); // drop the previous job's title while loading
       showLoading(); // clear the old summary immediately
     }
@@ -1094,6 +1117,17 @@
         pendingJobId = null;
         lastShownDescription = description;
         requestSummary(targetJob, description);
+      } else if (Date.now() - pendingSince > DESC_LOAD_TIMEOUT_MS) {
+        // The description never loaded for this job (a layout our selectors and the
+        // heuristic all miss). Stop the spinner, tell the user how to retry, and dump
+        // one diagnostic so the failing DOM can be fixed from a pasted console log.
+        const stuckJob = pendingJobId;
+        pendingJobId = null;
+        console.warn(LOG, "description not found before timeout for job", stuckJob);
+        logDomDiagnosis();
+        showError(
+          'İş açıklaması okunamadı. Sayfayı biraz aşağı kaydırıp "Yenile"ye bas.'
+        );
       }
     }
   }

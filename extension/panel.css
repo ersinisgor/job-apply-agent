@@ -91,6 +91,38 @@
   color: #57606a;
 }
 
+/* Spinner shown while a summary is being fetched, so a slow model call reads as
+   "working", not "nothing happened / errored". */
+.jobsum-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 0;
+  color: #57606a;
+}
+
+.jobsum-spinner {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 2px solid #c9d2dc;
+  border-top-color: #0a66c2;
+  border-radius: 50%;
+  animation: jobsum-spin 0.7s linear infinite;
+}
+
+@keyframes jobsum-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jobsum-spinner {
+    animation-duration: 1.6s;
+  }
+}
+
 .jobsum-error {
   color: #b42318;
 }
@@ -447,6 +479,10 @@
   }
   .jobsum-stack-row--alt {
     background: #262c33;
+  }
+  .jobsum-spinner {
+    border-color: #38434f;
+    border-top-color: #70b5f9;
   }
   .jobsum-stack-alt {
     color: #a9b0b8;

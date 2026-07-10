@@ -5,10 +5,10 @@ Backend Developer focused on building scalable REST APIs and backend systems usi
 **Backend:** Node.js, NestJS, Express, TypeScript, C#, .NET Core <br>
 **Frontend:** React, Next.js, JavaScript, HTML, CSS, Tailwind CSS <br>
 **API Development:** RESTful APIs, JWT Authentication, RBAC, Swagger, Postman <br>
-**Databases:** PostgreSQL, MongoDB, Supabase, SQL Server, TypeORM, Prisma, EF Core <br>
+**Databases:** PostgreSQL, MongoDB, Supabase, SQL Server, MySQL, TypeORM, Prisma, EF Core <br>
 **Architecture:** Clean Architecture, CQRS, Repository Pattern, Microservices Architecture (fundamentals) <br>
 **DevOps & Tools:** Docker, Docker Compose, Git, CI/CD fundamentals (Github Actions), Linux, Agile/Scrum <br>
-**AI & LLM**: OpenAI API, Claude API, Claude Code, LangChain, RAG, Embeddings, Vector Search <br>
+**AI & LLM**: OpenAI API, Claude API, Claude Code, LangChain, RAG, Embeddings, Vector Search, AI Agents, Prompt Engineering <br>
 
 ### EXPERIENCE
 #### Software Developer - Başlangıç Noktası | Nov 2024 – Present

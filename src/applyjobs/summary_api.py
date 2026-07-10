@@ -86,6 +86,10 @@ SYSTEM_PROMPT = (
     "The candidate KNOWS every technology named ANYWHERE in the profile — both the CV "
     "and the PAST PROJECTS — so a required technology counts as MET if it appears in "
     "either (e.g. Next.js used in a past project counts even if the CV omits it). "
+    "Treat obvious spelling variants of a technology as the SAME thing: 'REST API' = "
+    "'RESTful API', 'React' = 'React.js', 'Node' = 'Node.js', 'Vector Database' = "
+    "pgvector / Vector Search, 'MSSQL' = 'SQL Server' — a variant in the profile means "
+    "the requirement is met. "
     "A multi-option 'stack' group is a choice, so it counts as fully MET as soon as the "
     "candidate knows ANY ONE of its options. "
     "IGNORE experience and seniority ENTIRELY: do NOT lower the score for a senior/lead "
@@ -133,16 +137,72 @@ _FIT_GREEN_MIN = 70
 
 _PROFILE_HAYSTACK = "\n".join(p for p in (_CV_TEXT, _PROJECTS_TEXT) if p).lower()
 
+# Interchangeable spellings of the same technology. A required tech counts as known if
+# ANY spelling in its group is in the profile: postings and the model vary the wording
+# (REST API vs RESTful API, React vs React.js, Vector Database vs pgvector / Vector
+# Search), so a literal match alone kept flagging skills the candidate clearly has.
+# Everything is lower-case; entries are compared after version/'.js' normalization.
+_SYNONYM_GROUPS: list[set[str]] = [
+    {
+        "rest",
+        "rest api",
+        "rest apis",
+        "restful",
+        "restful api",
+        "restful apis",
+        "rest endpoints",
+        "restful services",
+    },
+    {"react", "reactjs"},
+    {"node", "nodejs"},
+    {"next", "nextjs"},
+    {"nest", "nestjs"},
+    {
+        "vector database",
+        "vector databases",
+        "vector db",
+        "vector store",
+        "vector search",
+        "vector retrieval",
+        "pgvector",
+    },
+    {"sql server", "mssql", "ms sql server", "microsoft sql server"},
+    {"postgresql", "postgres", "postgre"},
+    {"mongodb", "mongo"},
+]
+
+
+def _normalize_tech(tech: str) -> str:
+    """Lower-case, drop a trailing version ('React 18' -> 'react'), and strip a '.js'
+    suffix ('React.js' -> 'react') so spelling variants collapse to one form."""
+    t = tech.strip().lower()
+    t = re.sub(r"\s+v?\d+(?:\.\d+)*$", "", t).strip()  # 'react 18', 'tailwind css v4'
+    if t.endswith(".js"):
+        t = t[:-3]
+    return t
+
+
+def _tech_variants(tech: str) -> set[str]:
+    """Every spelling to look for when deciding whether the profile knows `tech`."""
+    variants = {tech.strip().lower(), _normalize_tech(tech)}
+    for base in list(variants):
+        for group in _SYNONYM_GROUPS:
+            if base in group:
+                variants |= group
+    return {v for v in variants if v}
+
 
 def _profile_mentions(tech: str) -> bool:
-    """True when `tech` is named anywhere in the profile (CV or past projects)."""
-    tech = tech.strip().lower()
-    if not tech:
+    """True when `tech` (or a known synonym of it) is named anywhere in the profile."""
+    if not tech or not tech.strip():
         return False
-    # Bounded on both sides so 'Go' misses 'Django' and 'Java' misses 'JavaScript',
-    # while '.NET', 'Node.js' and 'C#' still match themselves.
-    pattern = rf"(?<![a-z0-9.#+]){re.escape(tech)}(?![a-z0-9#+])"
-    return re.search(pattern, _PROFILE_HAYSTACK) is not None
+    for variant in _tech_variants(tech):
+        # Bounded on both sides so 'Go' misses 'Django' and 'Java' misses 'JavaScript',
+        # while '.NET', 'Node.js' and 'C#' still match themselves.
+        pattern = rf"(?<![a-z0-9.#+]){re.escape(variant)}(?![a-z0-9#+])"
+        if re.search(pattern, _PROFILE_HAYSTACK):
+            return True
+    return False
 
 
 def _option_known(option: str) -> bool:
@@ -276,7 +336,7 @@ _SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
 _CACHE_MAX = 1000
 # Bump whenever the scoring rubric (SYSTEM_PROMPT) or JobSummary schema changes, so a
 # stale on-disk cache from the old rules is discarded instead of returning old scores.
-_CACHE_VERSION = 7
+_CACHE_VERSION = 8
 
 
 def _load_cache() -> None:
