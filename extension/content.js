@@ -68,6 +68,7 @@
   ];
 
   let lastJobId = null; // most recently shown job id
+  let seenOnlyShownFor = null; // job whose "dismissed, never summarized" body is up
   let pendingJobId = null; // job waiting for its description to load
   let lastShownDescription = ""; // description of the shown job (stale guard)
   let requestSeq = 0; // request sequence to avoid race conditions
@@ -103,7 +104,7 @@
   const MARKER_LIMIT = 3000; // cap per store; prune oldest by timestamp on write
 
   function makeMarkerStore(storeKey, name) {
-    let map = {}; // jobId -> { t, title, company, fit }
+    let map = {}; // jobId -> { t, title, company, fit, seenOnly }
 
     function load() {
       try {
@@ -152,6 +153,12 @@
         title: (meta && meta.title) || (existing && existing.title) || "",
         company: (meta && meta.company) || (existing && existing.company) || "",
         fit: meta && meta.fit != null ? meta.fit : existing ? existing.fit : null,
+        // Sticky once cleared: a job summarized later must never fall back to
+        // warning-only, so an explicit `false` always wins over a stored `true`.
+        seenOnly:
+          meta && meta.seenOnly != null
+            ? !!meta.seenOnly
+            : !!(existing && existing.seenOnly),
       };
       persist();
       console.log(LOG, "marked " + name + ":", jobId);
@@ -184,6 +191,7 @@
   const markReviewed = reviewed.mark;
   const unmarkReviewed = reviewed.unmark;
   const isMaybe = maybe.has;
+  const isSeenOnly = (jobId) => !!(reviewed.get(jobId) || {}).seenOnly;
 
   // Turkish relative time for "you saw this N ago".
   function relativeTime(t) {
@@ -400,24 +408,70 @@
     return null;
   }
 
-  function cardJobId(el) {
-    const card = el.closest("[data-job-id], [data-occludable-job-id]");
-    if (!card) return null;
-    return (
-      card.getAttribute("data-job-id") ||
-      card.getAttribute("data-occludable-job-id")
-    );
+  // How a job card announces which posting it is. The old UI tags it with data-job-id;
+  // the new /jobs/search-results UI has hashed classes, no data-job-id and no posting
+  // link inside the card — but it does carry componentkey="job-card-component-ref-<id>".
+  const CARD_SELECTOR =
+    '[data-job-id], [data-occludable-job-id], [componentkey^="job-card-component-ref-"]';
+  const JOB_LINK = 'a[href*="/jobs/view/"]';
+
+  // The job card that owns a clicked control. Walks the composed path, which crosses
+  // the shadow-root boundaries that Element.closest() cannot.
+  function cardFrom(node, path) {
+    const tagged = node.closest && node.closest(CARD_SELECTOR);
+    if (tagged) return tagged;
+    // Last resort for a card shape we don't recognise: the widest ancestor holding
+    // EXACTLY ONE posting link. More than one means we have climbed out of the card
+    // into the results list, where the first link belongs to some other job.
+    let widest = null;
+    for (const el of path && path.length ? path : ancestorsOf(node)) {
+      if (!el || el.nodeType !== 1 || !el.querySelectorAll) continue;
+      if (el === document.body || el === document.documentElement) break;
+      if (el.matches && el.matches(CARD_SELECTOR)) return el;
+      const links = el.querySelectorAll(JOB_LINK).length;
+      if (links > 1) break;
+      if (links === 1) widest = el;
+    }
+    return widest;
   }
 
-  // Best-effort title/company from a job card's own text (first two lines).
-  function cardMeta(el) {
-    const card = el.closest("[data-job-id], [data-occludable-job-id]");
+  function ancestorsOf(node) {
+    const chain = [];
+    for (let el = node; el; el = el.parentElement) chain.push(el);
+    return chain;
+  }
+
+  function cardJobId(card) {
+    if (!card) return null;
+    const attr =
+      card.getAttribute("data-job-id") ||
+      card.getAttribute("data-occludable-job-id");
+    if (attr) return attr;
+    const key = card.getAttribute("componentkey") || "";
+    const fromKey = key.match(/job-card-component-ref-(\d+)/);
+    if (fromKey) return fromKey[1];
+    const link = card.querySelector(JOB_LINK);
+    const match = link && link.getAttribute("href").match(/\/jobs\/view\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  // Best-effort title/company from a job card. The new UI prints the title twice — once
+  // for screen readers, prefixed with state ("Selected, <title> (Verified job)"), once
+  // visually — and whether those land on one innerText line or two depends on CSS. So
+  // read the title from the visible span when it exists, and take as the company the
+  // first line that isn't just the title again.
+  function cardMeta(card) {
     if (!card) return {};
     const lines = (card.innerText || "")
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean);
-    return { title: lines[0] || "", company: lines[1] || "" };
+    const titleEl = card.querySelector('p span[aria-hidden="true"]');
+    const title = (titleEl && titleEl.textContent.trim()) || lines[0] || "";
+    const company = title
+      ? lines.find((l) => !l.includes(title) && !title.includes(l)) || ""
+      : lines[1] || "";
+    return { title, company };
   }
 
   // Detect clicks on LinkedIn's own dismiss (X) / undo (↩️) buttons. aria-label
@@ -428,15 +482,33 @@
   const warnedLabels = new Set(); // distinct unmatched aria-labels, capped
 
   function onDocClick(event) {
-    const btn = event.target.closest("button");
+    // composedPath() sees through shadow roots; event.target is retargeted to the
+    // shadow HOST, so .closest("button") would miss the new UI's dismiss button.
+    const path =
+      typeof event.composedPath === "function" ? event.composedPath() : [];
+    const btn =
+      path.find((n) => n && n.nodeType === 1 && n.tagName === "BUTTON") ||
+      (event.target.closest && event.target.closest("button"));
     if (!btn) return;
-    const jobId = cardJobId(btn);
-    if (!jobId) return; // not a button inside a job card
+    const card = cardFrom(btn, path);
+    const jobId = cardJobId(card);
     const label = (btn.getAttribute("aria-label") || btn.title || "").trim();
+    if (!jobId) {
+      // Not a button inside a job card — unless we simply failed to resolve one.
+      if (DEBUG && (UNDO_RE.test(label) || DISMISS_RE.test(label)))
+        console.warn(LOG, "dismiss/undo click but no job id resolved:", label);
+      return;
+    }
     if (UNDO_RE.test(label)) {
       unmarkReviewed(jobId);
     } else if (DISMISS_RE.test(label)) {
-      markReviewed(jobId, { ...cardMeta(btn), fit: cachedFit(jobId) });
+      // Dismissed straight from the list, before any summary existed: remember that,
+      // so re-encountering the job shows the warning alone and never costs a model call.
+      markReviewed(jobId, {
+        ...cardMeta(card),
+        fit: cachedFit(jobId),
+        seenOnly: !CACHE.get(jobId),
+      });
     } else if (label && warnedLabels.size < 8 && !warnedLabels.has(label)) {
       // Help tune DISMISS_RE/UNDO_RE for the user's locale during verification.
       warnedLabels.add(label);
@@ -674,6 +746,15 @@
     setBody(`<div class="jobsum-status jobsum-error">${escapeHtml(message)}</div>`);
   }
 
+  // A job dismissed from the list without ever being summarized. The "already reviewed"
+  // banner sits above this; the body only explains why there is nothing to show.
+  function showSeenOnly() {
+    if (showingList) return;
+    setBody(
+      `<div class="jobsum-status">Bu ilanı listeden elemiştin; özet oluşturulmadı.</div>`
+    );
+  }
+
   function renderSummary(data) {
     if (showingList) return;
     // Prefer what Claude extracted from the posting; fall back to the DOM
@@ -855,6 +936,8 @@
       return;
     }
     CACHE.delete(jobId); // drop the stale client-side copy
+    // An explicit "Yenile" overrides a list-dismissal: summarize it from now on.
+    if (isReviewed(jobId)) markReviewed(jobId, { seenOnly: false });
     lastShownDescription = description;
     showLoading();
     requestSummary(jobId, description, { force: true });
@@ -890,16 +973,14 @@
   // Dim reviewed job cards in the list and add a "görüldü" badge. Re-applied
   // every tick because LinkedIn virtualizes the list (cards mount/unmount).
   function markSeenCards() {
-    const cards = document.querySelectorAll(
-      "[data-job-id], [data-occludable-job-id]"
-    );
+    const cards = document.querySelectorAll(CARD_SELECTOR);
     cards.forEach((card) => {
       if (card.closest("#jobsum-panel")) return; // never touch our own panel
+      // The new UI repeats componentkey on a nested div; badge the outermost only.
+      if (card.parentElement && card.parentElement.closest(CARD_SELECTOR)) return;
       // Skip the big right-hand details pane (long text); only mark list cards.
       if ((card.innerText || "").length > 800) return;
-      const id =
-        card.getAttribute("data-job-id") ||
-        card.getAttribute("data-occludable-job-id");
+      const id = cardJobId(card);
       if (!id) return;
       const seen = isReviewed(id);
       const marked = card.classList.contains("jobsum-seen");
@@ -938,6 +1019,25 @@
     const jobId = getCurrentJobId();
     renderReviewStatus(jobId); // update the panel banner/toggle for this job
     if (!jobId) return;
+
+    // Dismissed from the list without ever being opened: the reviewed banner above is
+    // the whole story, so show nothing else and never spend a model call on it. "Yenile"
+    // still forces a real summary if the user changes their mind.
+    if (isSeenOnly(jobId) && !CACHE.get(jobId)) {
+      // Keyed on the job rather than on `lastJobId`, so a dismissal also replaces a
+      // "Preparing summary…" or an error left behind by the job we were already on.
+      if (seenOnlyShownFor !== jobId && !showingList) {
+        seenOnlyShownFor = jobId;
+        lastJobId = jobId;
+        pendingJobId = null;
+        lastShownDescription = "";
+        const marker = reviewed.get(jobId) || {};
+        setHeader(marker.title || "", marker.company || "");
+        showSeenOnly();
+      }
+      return;
+    }
+    seenOnlyShownFor = null;
 
     // Switched to a new job: give instant feedback first.
     if (jobId !== lastJobId) {
