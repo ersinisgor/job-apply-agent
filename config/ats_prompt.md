@@ -221,12 +221,24 @@ Rules:
 
 1. Preserve original wording as much as possible
 2. Avoid rewriting entire sentences
-3. Insert missing keywords naturally
-4. Prioritize keywords with:
+3. **HARD skills — honesty first (CRITICAL):** You may ONLY add, surface, or emphasize a hard skill
+   (programming language, framework, database, tool, methodology) that the candidate **actually has** —
+   i.e. it already appears in the **CURRENT CV** or the **PROJECTS LIST**. If a hard skill is required by
+   the job but is **❌ Missing from the candidate's profile**, DO NOT add it anywhere — not to CORE
+   SKILLS, not to a bullet, not to the Summary, not with a hedge like "(fundamentals)"/"(familiar)".
+   Leave the gap; an honest, slightly lower ATS score is the correct outcome.
+   ❌ Example: if the posting requires **Redis**, **Kafka**, or **Oracle** but none of them appear in the
+   profile, you must NOT write them into the CV. Never invent, imply, or borrow a hard skill the
+   candidate does not have. The only hard-skill "optimization" allowed is making a skill the candidate
+   DOES have more visible — reordering CORE SKILLS, or naming a profile technology that was implied.
+4. **SOFT skills — insert all (this is intended):** ALL soft-skill keywords extracted from the job
+   description MUST be included by weaving them naturally into appropriate sections (Summary, project
+   bullets, Intern, or Previous Experience). Make every soft skill a strong match. Soft skills are
+   traits, not claims of tooling, so full coverage here is fine and expected.
+5. Prioritize (surfacing profile hard skills, and inserting soft skills) by:
    - high frequency
    - high density
    - ❌ Missing status
-5. **ALL soft skill keywords extracted from the job description MUST be included in the CV by inserting them naturally into appropriate sections (Summary, Project descriptions, or Previous Experience).** Make them strong match.
 
 Keywords may be inserted at:
 
@@ -234,7 +246,30 @@ Keywords may be inserted at:
 - middle of sentences
 - end of sentences
 
-Do NOT create fake experience.
+Do NOT create fake experience, and do NOT claim any hard skill (language, framework, database, tool)
+the candidate does not actually have in the CURRENT CV or PROJECTS LIST.
+
+---
+
+# STEP 6.5 — ROLE TARGETING & CORE SKILLS ADAPTATION (CRITICAL)
+
+The candidate applies to **three kinds of postings**. First decide which one this Job Description is
+closest to, then shape the CV — especially the **CORE SKILLS** block and the Summary — around it. Role
+targeting changes **emphasis and order only**, never truthfulness: use ONLY technologies already in the
+candidate's profile (STEP 6 rule 3).
+
+- **Backend Developer** → Lead with backend languages/frameworks, APIs, databases, architecture, DevOps.
+  De-emphasize the front end. **OMIT the `Frontend:` line entirely** (treat as a pure back-end posting).
+- **Full-Stack Developer** → Balance backend and frontend. **KEEP the `Frontend:` line** and surface the
+  front-end technologies the candidate actually has (React, Next.js, JavaScript, HTML, CSS, Tailwind CSS).
+  Frame the Summary as full-stack.
+- **AI Engineer** → Lead with the **AI & LLM** line (OpenAI/Claude APIs, LangChain, RAG, embeddings,
+  vector search, AI agents, prompt engineering) and the AI/RAG project; keep the backend line strong.
+  Keep the `Frontend:` line only if the posting is front-end-facing.
+
+Within each CORE SKILLS line, reorder so the technologies the posting emphasizes come first. Never add a
+technology that is not in the profile just because the role wants it (STEP 6 rule 3). The exact rule for
+keeping vs. omitting the `Frontend:` line is in the OUTPUT FORMAT section — apply it per the role above.
 
 ---
 
@@ -319,8 +354,9 @@ Summary must:
 
 - include high-density keywords
 - be **maximum 5 lines**
-- clearly describe backend specialization
-- reflect backend / AI focus
+- clearly describe the candidate's specialization for the **target role** (backend / full-stack / AI —
+  see STEP 6.5), not backend by default
+- reflect that target role's focus
 
 ---
 
@@ -439,13 +475,16 @@ that final block, switch hats and act as a **second Senior Technical Recruiter /
 QA review of your own draft**. Re-check it against the job description, silently FIX every problem you
 find, and only then output the corrected version. Verify and fix:
 
-1. **Keyword coverage (most important):** EVERY important HARD skill and ALL SOFT skills from the job
-   description appear naturally somewhere in the CV (Summary, project bullets, Intern, or Previous
-   Experience). Insert any missing one by weaving a single word into an existing sentence — never by
-   adding fake experience or a new sentence.
+1. **Keyword coverage:** ALL SOFT skills from the job description appear naturally somewhere in the CV
+   (Summary, project bullets, Intern, or Previous Experience) — weave in any missing soft skill as a
+   single word. For HARD skills, only the ones the candidate ACTUALLY has (present in the CURRENT CV or
+   PROJECTS LIST) may appear; a required hard skill that is **missing from the profile MUST be left out,
+   NOT inserted** (STEP 6 rule 3) — including in CORE SKILLS. Never add fake experience or a hard skill
+   the candidate lacks (e.g. do not add Redis/Kafka/Oracle if they are not in the profile).
 2. **Accuracy & credibility:** every statement is truthful to the CURRENT CV + Projects List — no
-   invented technology, employer, date, or metric; the junior–mid level is preserved (no senior/
-   leadership/architecture-at-scale claims).
+   invented technology (including in CORE SKILLS — no language/framework/database/tool the candidate does
+   not have), employer, date, or metric; the junior–mid level is preserved (no senior/leadership/
+   architecture-at-scale claims).
 3. **Structure fidelity:** section headings, `#` levels, `<br>` / `Tech:` lines, `*` bullets and blank
    lines exactly mirror the CURRENT CV. No name/contact header, no `---`, no emojis, no extra sections.
 4. **Project titles** are GitHub Markdown links `#### [Title](https://github.com/...)` using the correct
