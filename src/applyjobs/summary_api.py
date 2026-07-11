@@ -169,6 +169,11 @@ _SYNONYM_GROUPS: list[set[str]] = [
     {"sql server", "mssql", "ms sql server", "microsoft sql server"},
     {"postgresql", "postgres", "postgre"},
     {"mongodb", "mongo"},
+    # Postings often bolt the spec version onto the bare name; the CV writes the bare
+    # form. A blanket trailing-digit strip would wreck 'S3', 'ES6', 'OAuth2', so pair
+    # these explicitly instead.
+    {"html", "html5"},
+    {"css", "css3"},
 ]
 
 
@@ -336,7 +341,7 @@ _SUMMARY_CACHE: "OrderedDict[str, JobSummary]" = OrderedDict()
 _CACHE_MAX = 1000
 # Bump whenever the scoring rubric (SYSTEM_PROMPT) or JobSummary schema changes, so a
 # stale on-disk cache from the old rules is discarded instead of returning old scores.
-_CACHE_VERSION = 8
+_CACHE_VERSION = 9
 
 
 def _load_cache() -> None:
@@ -395,6 +400,22 @@ def _cache_put(job_id: str | None, summary: JobSummary) -> None:
 _load_cache()
 
 
+def _summary_is_blank(summary: JobSummary) -> bool:
+    """True when the model returned nothing usable — every field empty, no stack, no
+    fit. That means the text it was handed was not really a posting (the extension
+    sometimes scrapes the wrong container); such a result must not be cached, or the
+    job would keep returning the empty summary on every later open."""
+    return not (
+        summary.job_title.strip()
+        or summary.company.strip()
+        or summary.role_summary.strip()
+        or summary.work_type_note.strip()
+        or summary.min_experience.strip()
+        or summary.fit_score
+        or any(any(opt.strip() for opt in group) for group in summary.stack)
+    )
+
+
 def summarize(req: SummarizeRequest) -> JobSummary:
     """Turn a job-posting text into a structured (Turkish-valued) summary."""
     if not settings.anthropic_api_key:
@@ -435,7 +456,12 @@ def summarize(req: SummarizeRequest) -> JobSummary:
         try:
             summary = JobSummary.model_validate_json(_extract_json(text))
             _annotate_stack(summary)
-            _cache_put(req.job_id, summary)
+            # Don't persist an empty result: the scraped text wasn't a posting, so let
+            # a later re-open (once the real description loads) recompute it.
+            if _summary_is_blank(summary):
+                logger.info("blank summary for job %s; not caching", req.job_id)
+            else:
+                _cache_put(req.job_id, summary)
             return summary
         except Exception as exc:  # noqa: BLE001 - malformed JSON: retry once
             last_error = exc

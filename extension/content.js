@@ -18,31 +18,21 @@
   // How long to wait for a job's description to appear in the DOM before giving up and
   // showing a retry hint, instead of spinning forever on a layout we can't read.
   const DESC_LOAD_TIMEOUT_MS = 12000;
+  // The new UI streams the detail pane in progressively, so an early read catches only
+  // the header/role blurb (a "Çalışma: hybrid" stub). Wait until the extracted text has
+  // stopped changing for this long before summarizing, so the stack/experience/fit
+  // sections that arrive a beat later are included.
+  const DESC_STABLE_MS = 1400;
+  // Shown whenever we could not read a real job description (never loaded, or the text
+  // we scraped turned out not to be a posting so the backend summary came back blank).
+  const DESC_HINT = 'İş açıklaması okunamadı. Sayfayı biraz aşağı kaydırıp "Yenile"ye bas.';
   console.log(LOG, "content script loaded:", location.href);
 
   // --- LinkedIn DOM selectors (brittle; tried in order, first match wins) ---
+  // The description itself is no longer read via selectors — the hashed new UI made
+  // them match the wrong region (see heuristicDescription); title/company/location are
+  // still best-effort hints for the panel header and the backend payload.
   const SELECTORS = {
-    description: [
-      "#job-details",
-      ".jobs-description__content .jobs-box__html-content",
-      ".jobs-description-content__text",
-      "article.jobs-description__container",
-      ".jobs-description__container",
-      ".jobs-box__html-content",
-      // guest (logged-out) view
-      ".show-more-less-html__markup",
-      ".description__text",
-    ],
-    // Right-hand details pane; used as a raw-text fallback when the description
-    // selectors above stop matching (LinkedIn changes its DOM often). The backend
-    // LLM tolerates the extra chrome text around the description.
-    detailsPane: [
-      ".jobs-search__job-details--wrapper",
-      ".jobs-search__job-details",
-      ".scaffold-layout__detail",
-      ".jobs-details",
-      ".job-view-layout",
-    ],
     title: [
       ".job-details-jobs-unified-top-card__job-title",
       ".jobs-unified-top-card__job-title",
@@ -74,12 +64,13 @@
   let seenOnlyShownFor = null; // job whose "dismissed, never summarized" body is up
   let pendingJobId = null; // job waiting for its description to load
   let pendingSince = 0; // when the pending job started waiting (for the load timeout)
+  let pendingDesc = ""; // last description read for the pending job (stability check)
+  let pendingDescSince = 0; // when pendingDesc last CHANGED (settle timer)
   let lastShownDescription = ""; // description of the shown job (stale guard)
   let requestSeq = 0; // request sequence to avoid race conditions
   let lastBodyHtml = `<div class="jobsum-status">Ready — click a job on the left.</div>`;
   let lastHeader = { title: "Job Summary", company: "" }; // panel header state
   let userClosed = false; // don't reopen if the user closed the panel
-  let warnedNoSelectorFor = null; // log the missing-description warning once per job
   let showingList = false; // panel is showing a marker list instead of a summary
   let listKind = "reviewed"; // which list is shown: "reviewed" or "maybe"
 
@@ -269,25 +260,10 @@
     return "";
   }
 
-  // Fallback: when no description selector matches, take the whole details
-  // pane's text (capped) — resilient to LinkedIn DOM changes.
-  function fallbackDescription() {
-    const roots = collectRoots();
-    for (const sel of SELECTORS.detailsPane) {
-      const el = deepQuery(sel, roots);
-      if (el) {
-        const text = el.innerText.trim();
-        if (text.length >= 200) return text.slice(0, 15000);
-      }
-    }
-    return "";
-  }
-
-  // Last-resort fallback for unknown layouts (e.g. the new /jobs/search-results
-  // UI): find the longest VISIBLE text node on the page (almost always a job
-  // description paragraph), then climb to the largest container that still looks
-  // like a content pane (not the whole page). LinkedIn hides JSON blobs in
-  // <code> tags, so hidden nodes must be skipped.
+  // The description is read by finding the longest VISIBLE text node on the page
+  // (almost always a job-description paragraph), then climbing to the largest container
+  // that still looks like a content pane (not the whole page, not the results list).
+  // LinkedIn hides JSON blobs in <code> tags, so hidden nodes must be skipped.
   function findLongestVisibleTextEl() {
     let best = null;
     let bestLen = 0;
@@ -320,6 +296,32 @@
     return { el: best, len: bestLen };
   }
 
+  // On the new /jobs/search-results UI a freshly clicked job renders its description
+  // in the right pane a beat AFTER the click. Read the page during that gap and the
+  // description selectors miss, so the longest-text heuristic climbs into LinkedIn's
+  // global nav + filter rail instead ("Skip to main content / Home / My Network / …").
+  // That chrome is not a posting: the backend returns an empty summary for it. "Skip to
+  // main content" never appears in a real description, so treat any text carrying the
+  // nav signature as "not loaded yet" and keep waiting for the real description.
+  function looksLikePageChrome(text) {
+    if (!text) return false;
+    const head = text.slice(0, 600).toLowerCase();
+    // LinkedIn's own UI strings that never appear in a job posting. The old-class
+    // selectors, on the hashed new UI, variously grab the top nav rail OR the
+    // left filter/results rail — both must be recognised so they get rejected.
+    return (
+      head.includes("skip to main content") || // top nav rail
+      head.includes("ai-powered search is in beta") || // results header
+      head.includes("how promoted jobs are ranked") || // results header
+      (head.includes("experience level") && head.includes("employment type")) || // filter rail
+      (head.includes("my network") && head.includes("notifications")) // top nav rail
+    );
+  }
+
+  // Empty out a tier's result when it is page chrome, so the extraction chain falls
+  // through to the next tier instead of accepting the nav rail.
+  const nonChrome = (text) => (looksLikePageChrome(text) ? "" : text || "");
+
   function heuristicDescription() {
     const { el: start, len } = findLongestVisibleTextEl();
     // Low seed threshold: the new UI splits the description into many short lines, so
@@ -328,9 +330,21 @@
     if (!start || len < 50) return "";
     let el = start;
     while (el.parentElement && el.parentElement !== document.body) {
-      const parentLen = (el.parentElement.innerText || "").trim().length;
-      if (parentLen > 12000) break; // don't swallow the whole page
-      el = el.parentElement;
+      const parent = el.parentElement;
+      const parentText = (parent.innerText || "").trim();
+      if (parentText.length > 12000) break; // don't swallow the whole page
+      // Stop before a parent that folds in the global nav / filter rail: on the new UI
+      // the clean description container's ancestor also holds the left chrome, and
+      // climbing into it makes the whole result read as page chrome (then rejected,
+      // and the job times out). Keep the clean child instead.
+      if (looksLikePageChrome(parentText)) break;
+      // Stop before a parent that also contains the left RESULTS LIST. The detail pane
+      // and the job-card list share an ancestor; climbing into it made the result begin
+      // with the stack of cards ("Senior Backend Developer … GönderAL … Viewed …") — the
+      // model then summarized the list, not the posting. The detail pane holds no list
+      // cards, so a parent that does means we've climbed out of it: keep the child.
+      if (parent.querySelector(LIST_CARD_SELECTOR)) break;
+      el = parent;
     }
     const text = (el.innerText || "").trim();
     return text.length >= 300 ? text.slice(0, 15000) : "";
@@ -890,6 +904,23 @@
     return div.innerHTML;
   }
 
+  // True when a backend summary carries nothing worth showing — no header, no fit, no
+  // stack, no field. This happens when the text we scraped was not actually a posting
+  // (the model then fills every field empty), which on some layouts is the ONLY sign
+  // that our extraction grabbed the wrong container. Treated like a read failure.
+  function summaryIsBlank(data) {
+    if (!data) return true;
+    if (data.job_title || data.company) return false;
+    if (Math.round(Number(data.fit_score) || 0) > 0) return false;
+    const stackHasContent =
+      Array.isArray(data.stack) &&
+      data.stack.some((g) => (Array.isArray(g) ? g.length > 0 : !!g));
+    if (stackHasContent) return false;
+    return !FIELDS.some(
+      (f) => f.key !== "stack" && renderValue(data[f.key]) !== null
+    );
+  }
+
   // --- Main flow ---
 
   // Summary call to the backend (only to our own localhost service).
@@ -939,10 +970,8 @@
   // The 3-tier description extraction, mirroring maybeUpdate's chain. Used by the
   // "Yenile" button to re-read the current page's text before recomputing.
   function getDescription() {
-    let d = firstMatchText(SELECTORS.description);
-    if (!d) d = fallbackDescription();
-    if (!d) d = heuristicDescription();
-    return d || "";
+    // Heuristic only, chrome-rejected (see maybeUpdate for why the selectors are out).
+    return nonChrome(heuristicDescription());
   }
 
   // "Yenile": recompute the current job's summary from whatever text is on screen
@@ -980,6 +1009,20 @@
 
     callBackend(payload)
       .then((data) => {
+        // A blank summary means the text we scraped was not a real posting. Don't cache
+        // it (so a later Yenile / re-open can still succeed once the description loads),
+        // dump one diagnostic, and show the same retry hint as the load timeout.
+        if (summaryIsBlank(data)) {
+          if (seq !== requestSeq || jobId !== lastJobId) return;
+          console.warn(
+            LOG,
+            `backend summary was blank; sent ${description.length} chars:`,
+            JSON.stringify(description.slice(0, 200))
+          );
+          logDomDiagnosis();
+          showError(DESC_HINT);
+          return;
+        }
         cacheSet(jobId, data, description);
         if (seq !== requestSeq || jobId !== lastJobId) return; // switched jobs meanwhile
         console.log(LOG, "summary received");
@@ -1075,41 +1118,34 @@
       console.log(LOG, "new job detected:", jobId);
       pendingJobId = jobId;
       pendingSince = Date.now();
+      pendingDesc = ""; // reset the stability tracker for the new job
+      pendingDescSince = Date.now();
       setHeader("", ""); // drop the previous job's title while loading
       showLoading(); // clear the old summary immediately
     }
 
     // Summarize once the pending job's description has loaded.
     if (pendingJobId) {
-      let description = firstMatchText(SELECTORS.description);
-      if (!description) {
-        description = fallbackDescription();
-        if (description && warnedNoSelectorFor !== pendingJobId) {
-          warnedNoSelectorFor = pendingJobId;
-          if (DEBUG)
-            console.warn(
-              LOG,
-              "description selectors matched nothing; using details-pane fallback"
-            );
-        }
+      // Heuristic ONLY. The old-class selectors don't match the hashed new UI's
+      // description — they instead land on the LEFT results column (filter rail or the
+      // stack of job cards), which the model summarizes to nothing OR to the wrong job.
+      // Worse, that column is static, so it trivially passed the stability gate and got
+      // sent before the real description loaded. `findLongestVisibleTextEl` skips list
+      // cards and reliably lands on the clicked job's description (both new and old UI),
+      // so trust it alone; if it finds nothing we simply wait (see the timeout below).
+      let description = nonChrome(heuristicDescription());
+      // Wait for the description to SETTLE before sending: only summarize once the text
+      // has stopped changing for DESC_STABLE_MS. A brief pause mid-stream (which two
+      // consecutive equal reads would mistake for "done") no longer triggers an early
+      // send of the half-loaded stub.
+      if (description !== pendingDesc) {
+        pendingDesc = description;
+        pendingDescSince = Date.now(); // still growing — restart the settle timer
       }
-      if (!description) {
-        description = heuristicDescription();
-        if (warnedNoSelectorFor !== pendingJobId) {
-          warnedNoSelectorFor = pendingJobId;
-          if (DEBUG) {
-            console.warn(
-              LOG,
-              description
-                ? "selectors + pane fallback empty; using longest-text heuristic"
-                : "no description found yet (selectors + fallbacks empty)"
-            );
-            logDomDiagnosis();
-          }
-        }
-      }
+      const stable =
+        !!description && Date.now() - pendingDescSince >= DESC_STABLE_MS;
       if (
-        description &&
+        stable &&
         description.length >= 40 &&
         description !== lastShownDescription // don't summarize stale (old) text
       ) {
@@ -1118,16 +1154,14 @@
         lastShownDescription = description;
         requestSummary(targetJob, description);
       } else if (Date.now() - pendingSince > DESC_LOAD_TIMEOUT_MS) {
-        // The description never loaded for this job (a layout our selectors and the
-        // heuristic all miss). Stop the spinner, tell the user how to retry, and dump
-        // one diagnostic so the failing DOM can be fixed from a pasted console log.
+        // The description never became readable for this job (a layout the heuristic
+        // misses). Stop the spinner, tell the user how to retry, and dump one
+        // diagnostic so the failing DOM can be fixed from a pasted console log.
         const stuckJob = pendingJobId;
         pendingJobId = null;
         console.warn(LOG, "description not found before timeout for job", stuckJob);
         logDomDiagnosis();
-        showError(
-          'İş açıklaması okunamadı. Sayfayı biraz aşağı kaydırıp "Yenile"ye bas.'
-        );
+        showError(DESC_HINT);
       }
     }
   }
